@@ -21,8 +21,7 @@ run-worker:
 	$(PYTHON) -m app.workers.runner
 
 migrate:
-	@echo "Apply migrations/0001_schema.sql then migrations/0002_functions.sql in Supabase SQL Editor."
+	supabase db push
 
 demo:
 	$(PYTHON) scripts/demo.py
-

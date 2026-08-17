@@ -121,6 +121,7 @@ create table public.automation_jobs (
     dedupe_key text not null unique,
     payload jsonb not null default '{}',
     attempts integer not null default 0,
+    claimed_at timestamptz,
     last_error text,
     created_at timestamptz not null default now()
 );
@@ -157,4 +158,3 @@ alter table public.automation_jobs enable row level security;
 alter table public.daily_throttles enable row level security;
 
 commit;
-

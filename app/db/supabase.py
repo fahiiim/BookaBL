@@ -333,7 +333,7 @@ class SupabaseDatabase:
 
     async def complete_job(self, job_id: UUID) -> None:
         await self._client.table("automation_jobs").update(
-            {"status": "completed", "last_error": None}
+            {"status": "completed", "claimed_at": None, "last_error": None}
         ).eq("id", str(job_id)).execute()
 
     async def retry_job(
@@ -343,6 +343,7 @@ class SupabaseDatabase:
             {
                 "status": "failed" if failed else "pending",
                 "due_at": due_at.isoformat(),
+                "claimed_at": None,
                 "last_error": error[:2000],
             }
         ).eq("id", str(job_id)).execute()

@@ -177,6 +177,7 @@ class AutomationJob(DomainModel):
     dedupe_key: str
     payload: dict[str, Any] = Field(default_factory=dict)
     attempts: int = 0
+    claimed_at: datetime | None = None
     last_error: str | None = None
     created_at: datetime
 
@@ -211,4 +212,3 @@ class BookingSummary(DomainModel):
     appointment: Appointment
     patient: Patient
     service: Service
-

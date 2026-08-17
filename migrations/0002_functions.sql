@@ -33,6 +33,13 @@ begin
     from public.services
     where id = p_service_id and clinic_id = p_clinic_id;
 
+    if not exists (
+        select 1 from public.patients
+        where id = p_patient_id and clinic_id = p_clinic_id
+    ) then
+        raise exception using errcode = '23503', message = 'patient does not belong to clinic';
+    end if;
+
     if p_ends_at <= p_starts_at
        or p_ends_at <> p_starts_at + make_interval(mins => v_service.duration_min) then
         raise exception using errcode = '22023', message = 'invalid appointment duration';
@@ -137,13 +144,16 @@ as $$
     with selected as (
         select id
         from public.automation_jobs
-        where status = 'pending' and due_at <= clock_timestamp()
+        where (status = 'pending' and due_at <= clock_timestamp())
+           or (status = 'processing' and claimed_at < clock_timestamp() - interval '5 minutes')
         order by due_at, created_at
         for update skip locked
         limit greatest(n, 0)
     )
     update public.automation_jobs job
-    set status = 'processing', attempts = job.attempts + 1
+    set status = 'processing',
+        claimed_at = clock_timestamp(),
+        attempts = job.attempts + 1
     from selected
     where job.id = selected.id
     returning job.*;

@@ -54,6 +54,14 @@ class OutboxWorker:
             try:
                 await self._deliver(clinic, item)
                 await self._database.mark_outbox_sent(item.id)
+                await self._database.log_message(
+                    clinic.id,
+                    None,
+                    item.channel,
+                    "outbound",
+                    self._body(item),
+                    item.payload,
+                )
             except Exception as exc:
                 logger.exception("outbox_delivery_failed")
                 permanently_failed = item.attempts > 4
@@ -129,6 +137,13 @@ class OutboxWorker:
             buttons.append(ReplyButton(id=str(raw["id"]), title=str(raw["title"])))
         return buttons
 
+    @staticmethod
+    def _body(item: NotificationOutbox) -> str:
+        for key in ("text", "body", "template_name"):
+            if key in item.payload:
+                return str(item.payload[key])
+        return item.channel
+
     async def run_forever(self, stop: asyncio.Event) -> None:
         """Poll until ``stop`` is set."""
 
@@ -137,4 +152,3 @@ class OutboxWorker:
             if processed == 0:
                 with suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
-

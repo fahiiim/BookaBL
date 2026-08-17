@@ -152,8 +152,11 @@ class MetaWhatsApp:
             raise ExternalServiceError("whatsapp", f"send failed: {exc}") from exc
 
     def _headers(self, clinic: Clinic) -> dict[str, str]:
-        token = clinic.wa_token_enc or self._default_access_token
-        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        del clinic
+        return {
+            "Authorization": f"Bearer {self._default_access_token}",
+            "Content-Type": "application/json",
+        }
 
 
 class FakeWhatsApp:
@@ -207,4 +210,3 @@ class FakeWhatsApp:
             return self.media[media_id]
         except KeyError as exc:
             raise ExternalServiceError("whatsapp", "fake media not found") from exc
-

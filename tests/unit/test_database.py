@@ -77,3 +77,18 @@ async def test_webhook_event_deduplication_and_leasing() -> None:
     await db.mark_event_processed("wamid.1")
     assert db.events["wamid.1"].processed_at == NOW
 
+
+@pytest.mark.asyncio
+async def test_abandoned_automation_job_lease_is_reclaimed() -> None:
+    clock = FrozenClock(NOW)
+    db = InMemoryDatabase(clock)
+    await db.enqueue_job(CLINIC_ID, "reminder", NOW, "reminder:lease-test")
+
+    first = await db.pop_due_jobs(1)
+    assert first[0].attempts == 1
+    assert await db.pop_due_jobs(1) == []
+
+    clock.advance(timedelta(minutes=6))
+    reclaimed = await db.pop_due_jobs(1)
+    assert reclaimed[0].id == first[0].id
+    assert reclaimed[0].attempts == 2

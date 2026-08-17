@@ -381,11 +381,22 @@ class InMemoryDatabase:
         async with self._lock:
             candidates = sorted(self.jobs.values(), key=lambda job: job.due_at)
             claimed: list[AutomationJob] = []
+            lease_expired = self._clock.now() - timedelta(minutes=5)
             for job in candidates:
-                if job.status is not JobStatus.PENDING or job.due_at > self._clock.now():
+                is_due = job.status is JobStatus.PENDING and job.due_at <= self._clock.now()
+                is_abandoned = (
+                    job.status is JobStatus.PROCESSING
+                    and job.claimed_at is not None
+                    and job.claimed_at < lease_expired
+                )
+                if not is_due and not is_abandoned:
                     continue
                 updated = job.model_copy(
-                    update={"status": JobStatus.PROCESSING, "attempts": job.attempts + 1}
+                    update={
+                        "status": JobStatus.PROCESSING,
+                        "claimed_at": self._clock.now(),
+                        "attempts": job.attempts + 1,
+                    }
                 )
                 self.jobs[job.id] = updated
                 claimed.append(updated)
@@ -397,7 +408,11 @@ class InMemoryDatabase:
         async with self._lock:
             job = self.jobs[job_id]
             self.jobs[job_id] = job.model_copy(
-                update={"status": JobStatus.COMPLETED, "last_error": None}
+                update={
+                    "status": JobStatus.COMPLETED,
+                    "claimed_at": None,
+                    "last_error": None,
+                }
             )
 
     async def retry_job(
@@ -409,6 +424,7 @@ class InMemoryDatabase:
                 update={
                     "status": JobStatus.FAILED if failed else JobStatus.PENDING,
                     "due_at": due_at,
+                    "claimed_at": None,
                     "last_error": error[:2000],
                 }
             )
