@@ -24,6 +24,20 @@ class InvalidSignatureError(BookablError):
     status_code = 401
 
 
+class WebhookVerificationError(BookablError):
+    """A webhook subscription verification token was rejected."""
+
+    code = "webhook_verification_failed"
+    status_code = 403
+
+
+class InvalidPayloadError(BookablError):
+    """An inbound webhook body is not a valid supported payload."""
+
+    code = "invalid_payload"
+    status_code = 400
+
+
 class ClinicNotFoundError(BookablError):
     """No clinic is configured for the requested external identifier."""
 
@@ -57,4 +71,3 @@ class ExternalServiceError(BookablError):
 
     def __str__(self) -> str:
         return f"{self.service}: {self.detail}"
-
