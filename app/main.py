@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import ApiContext
+from app.api.dev import router as dev_router
 from app.api.health import router as health_router
 from app.api.telegram import router as telegram_router
 from app.api.whatsapp import router as whatsapp_router
@@ -37,6 +38,9 @@ def create_app(api_context: ApiContext | None = None) -> FastAPI:
     application.include_router(health_router)
     application.include_router(whatsapp_router)
     application.include_router(telegram_router)
+    route_settings = api_context.settings if api_context else get_settings()
+    if route_settings.app_env == "dev":
+        application.include_router(dev_router)
 
     @application.exception_handler(BookablError)
     async def handle_bookabl_error(_request: Request, exc: BookablError) -> JSONResponse:
