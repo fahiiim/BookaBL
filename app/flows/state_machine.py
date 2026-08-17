@@ -23,6 +23,7 @@ class ConversationTransitions:
             {
                 ConversationStep.AWAIT_MA_NAME,
                 ConversationStep.AWAIT_MA_NUMBER,
+                ConversationStep.AWAIT_SLOT,
                 ConversationStep.IDLE,
             }
         ),
@@ -30,11 +31,16 @@ class ConversationTransitions:
             {
                 ConversationStep.AWAIT_MA_NUMBER,
                 ConversationStep.AWAIT_MA_DEPENDENT,
+                ConversationStep.AWAIT_SLOT,
                 ConversationStep.IDLE,
             }
         ),
         ConversationStep.AWAIT_MA_DEPENDENT: frozenset(
-            {ConversationStep.AWAIT_MA_DEPENDENT, ConversationStep.IDLE}
+            {
+                ConversationStep.AWAIT_MA_DEPENDENT,
+                ConversationStep.AWAIT_SLOT,
+                ConversationStep.IDLE,
+            }
         ),
     }
 

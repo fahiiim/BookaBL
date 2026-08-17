@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.dependencies import ApiContext
 from app.api.health import router as health_router
+from app.api.telegram import router as telegram_router
 from app.api.whatsapp import router as whatsapp_router
 from app.core.config import get_settings
 from app.core.exceptions import BookablError
@@ -35,6 +36,7 @@ def create_app(api_context: ApiContext | None = None) -> FastAPI:
         application.state.api_context = api_context
     application.include_router(health_router)
     application.include_router(whatsapp_router)
+    application.include_router(telegram_router)
 
     @application.exception_handler(BookablError)
     async def handle_bookabl_error(_request: Request, exc: BookablError) -> JSONResponse:
@@ -62,4 +64,3 @@ def create_app(api_context: ApiContext | None = None) -> FastAPI:
 
 
 app = create_app()
-
