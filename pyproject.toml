@@ -55,5 +55,5 @@ plugins = ["pydantic.mypy"]
 exclude = ['^\.venv/']
 
 [[tool.mypy.overrides]]
-module = ["supabase", "supabase.*"]
+module = ["supabase", "supabase.*", "postgrest", "postgrest.*"]
 ignore_missing_imports = true
