@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     app_env: Literal["dev", "prod"] = "dev"
     log_level: str = "INFO"
     time_offset_seconds: int = 0
+    run_workers_in_api: bool = False
 
     openai_api_key: SecretStr | None = None
     openai_intent_model: str = "gpt-4o-mini"
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     wa_verify_token: SecretStr | None = None
     wa_phone_number_id: str | None = None
     wa_access_token: SecretStr | None = None
+    wa_graph_api_version: str = "v23.0"
 
     telegram_bot_token: SecretStr | None = None
     telegram_bot_username: str | None = None
@@ -51,4 +53,3 @@ def get_settings() -> Settings:
     """Return the process-wide immutable settings instance."""
 
     return Settings()
-
