@@ -68,14 +68,22 @@ Apply database files in this exact order in the Supabase SQL Editor:
 
 Alternatively, after installing and linking the Supabase CLI, run `make migrate`.
 
-Start the API and worker in separate terminals:
+For local development, `.env.example` enables embedded workers, so one command starts the API,
+inbound event processor, outbox delivery, and scheduler:
+
+```powershell
+python -m uvicorn app.main:app --reload
+```
+
+For production or separate-process development, set `RUN_WORKERS_IN_API=false` and start the API
+and worker in separate terminals:
 
 ```powershell
 make run-api
 make run-worker
 ```
 
-Without `make`, the equivalent commands are:
+Without `make`, the equivalent separate-process commands are:
 
 ```powershell
 python -m uvicorn app.main:app --reload
@@ -128,7 +136,8 @@ insert into public.services (clinic_id, name, duration_min, price) values
 
 Use the real Meta `phone_number_id`, not the display phone number. The configured system-user
 `WA_ACCESS_TOKEN` must have access to every enrolled phone-number ID. `telegram_chat_id` is the
-owner's numeric chat ID. The owner must start the bot before Telegram can deliver messages.
+owner’s numeric chat ID. The owner must start the bot before Telegram can deliver messages.
+`WA_GRAPH_API_VERSION` controls the versioned Meta endpoint and defaults to `v23.0`.
 
 `work_days` use ISO weekday numbers. Reminder template configuration is optional; without it,
 the scheduler sends an interactive session message. Google Calendar is optional; when the three
@@ -143,6 +152,8 @@ the scheduler sends an interactive session message. Google Calendar is optional;
 - `POST /dev/trigger-due-jobs` exists only when `APP_ENV=dev` and runs one scheduler batch.
 - `TIME_OFFSET_SECONDS` shifts the injected system clock for demos. Restart API and worker after
   changing it so both processes use the same effective time.
+- `RUN_WORKERS_IN_API=true` supervises all three worker loops inside the API process. Do not also
+  start `app.workers.runner` unless you intentionally want another queue consumer.
 - Failed outbox sends retry after 30 seconds, 2 minutes, 10 minutes, and 1 hour. A fifth failed
   attempt moves the item to `failed` and sends the owner a direct Telegram DLQ alert.
 
@@ -173,4 +184,3 @@ the scheduler sends an interactive session message. Google Calendar is optional;
 OpenAI integration follows the official guidance for
 [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) and
 [file transcription](https://developers.openai.com/api/docs/guides/speech-to-text).
-
