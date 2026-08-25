@@ -24,20 +24,27 @@ def send(text):
                            "timestamp": str(int(time.time())), "type": "text", "text": {"body": text}}],
         }}]}]}).encode()
     sig = "sha256=" + hmac.new(SECRET, body, hashlib.sha256).hexdigest()
-    r = httpx.post(API, content=body, headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig})
-    print(f"sent {text!r} -> {r.status_code}")
+    print(f"sent {text!r} ->", httpx.post(API, content=body, timeout=30,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig}).status_code)
 
 def state():
     r = httpx.get(f"{SB}/rest/v1/conversation_states",
                   params={"select": "state,slot", "order": "updated_at.desc", "limit": "1"}, headers=H)
     return (r.json() or [{}])[0]
 
-send("book appointment"); time.sleep(4)          # intent -> offers services
-send("Cleaning");         time.sleep(4)          # text fallback resolves service
-slots = state().get("slot", {}).get("offered_slots", [])
+def wait_for(key, timeout=30):
+    for _ in range(timeout):
+        time.sleep(1)
+        slots = state().get("slot") or {}
+        if slots.get(key):
+            return slots
+    raise SystemExit(f"timeout waiting for {key}")
+
+send("book appointment"); wait_for("offered_service_ids")
+send("Cleaning");         slots = wait_for("offered_slots")
 print("offered slots:", slots)
-send("slot:" + slots[0]); time.sleep(4)          # pick first offered slot
-send("Discovery Health"); time.sleep(4)
-send("1234567");          time.sleep(4)
+send("slot:" + slots["offered_slots"][0]); time.sleep(2)   # ← fixed line
+send("Discovery Health"); time.sleep(2)
+send("1234567");          time.sleep(2)
 send("01");               time.sleep(6)
-print("DONE -> check Telegram, Supabase appointments + automation_jobs")
+print("DONE -> check Telegram + Supabase")
