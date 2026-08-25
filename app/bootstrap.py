@@ -61,7 +61,7 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
         )
     if settings.wa_access_token:
         whatsapp: WhatsAppSender = MetaWhatsApp(
-            settings.wa_access_token.get_secret_value()
+            settings.wa_access_token.get_secret_value(), settings.wa_graph_api_version
         )
     elif settings.app_env == "dev":
         whatsapp = FakeWhatsApp()
