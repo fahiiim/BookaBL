@@ -1,17 +1,21 @@
 import httpx
+from app.core.config import get_settings
 
-url = "https://graph.facebook.com/v21.0/1270626386131979/messages"
-# PASTE YOUR NEW ACCESS TOKEN HERE:
-token = "EAAWgx7IPT5IBSVRicXg7pZCcHgIH2OC8ZC3mUXWskeJBZAZBlWmRmeF0Sd56D1JtImQZAmGW4XBJEpT5IhWcnm5V8bNXyQFZBchhWYe90BYsDlZBinfxnYnsChlVnZA6R2tG2Uc36SCiGUf7if89lxQSqSZCJSpQrZBbNCWZCF2W43YWpROojoQvAoDbuzdgEchlldPKwRZACetFCxZAG1YZAQZCinIDXWeZAnnJeWLu7AKZBXEDZBLPYJhXn5vNDgHH4ZApW7e2vhCv98d22zi9vFyIHEzIFbnrwZDZD"
+WABA_ID = "1013195638006734"
+GRAPH_API_VERSION = "v23.0"
 
-payload = {
-    "messaging_product": "whatsapp",
-    "to": "8801400530058",  # Your Bangladesh number
-    "type": "text",
-    "text": {"body": "BOOKABL send test from Python!"}
-}
+settings = get_settings()
+if settings.wa_access_token is None:
+    raise SystemExit("WA_ACCESS_TOKEN is not configured in .env")
 
-print("Sending test message...")
-r = httpx.post(url, headers={"Authorization": f"Bearer {token}"}, json=payload)
-print(f"Status: {r.status_code}")
-print(f"Response: {r.text}")
+url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{WABA_ID}/subscribed_apps"
+response = httpx.get(
+    url,
+    headers={
+        "Authorization": f"Bearer {settings.wa_access_token.get_secret_value()}"
+    },
+    timeout=20,
+)
+
+print(response.status_code)
+print(response.text)
