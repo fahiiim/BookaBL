@@ -31,6 +31,12 @@ def create_app(api_context: ApiContext | None = None) -> FastAPI:
             runtime = await build_runtime(settings)
             application.state.runtime = runtime
             application.state.api_context = runtime.api_context
+            if settings.run_workers_in_api:
+                from app.workers.supervisor import supervise_workers
+
+                async with supervise_workers(runtime):
+                    yield
+                return
         yield
 
     application = FastAPI(title="BOOKABL", version="0.1.0", lifespan=lifespan)
