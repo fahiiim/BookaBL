@@ -8,8 +8,6 @@ import httpx
 from app.core.exceptions import ExternalServiceError
 from app.domain.models import Clinic
 
-GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
-
 
 @dataclass(frozen=True, slots=True)
 class ReplyButton:
@@ -46,10 +44,19 @@ class WhatsAppSender(Protocol):
 
 
 class MetaWhatsApp:
-    """HTTP adapter for Meta's WhatsApp Graph API v21.0."""
+    """HTTP adapter for Meta's versioned WhatsApp Graph API."""
 
-    def __init__(self, access_token: str, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        access_token: str,
+        graph_api_version: str = "v23.0",
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._default_access_token = access_token
+        version = graph_api_version.strip()
+        if not version.startswith("v") or not version[1:].replace(".", "", 1).isdigit():
+            raise ValueError("WhatsApp Graph API version must look like 'v23.0'")
+        self._graph_api_base = f"https://graph.facebook.com/{version}"
         self._client = client or httpx.AsyncClient(timeout=20)
 
     async def send_text(self, clinic: Clinic, to: str, text: str) -> None:
@@ -128,7 +135,7 @@ class MetaWhatsApp:
         headers = self._headers(clinic)
         try:
             metadata_response = await self._client.get(
-                f"{GRAPH_API_BASE}/{media_id}", headers=headers
+                f"{self._graph_api_base}/{media_id}", headers=headers
             )
             metadata_response.raise_for_status()
             media_url = str(metadata_response.json()["url"])
@@ -143,7 +150,7 @@ class MetaWhatsApp:
     async def _send(self, clinic: Clinic, payload: dict[str, Any]) -> None:
         try:
             response = await self._client.post(
-                f"{GRAPH_API_BASE}/{clinic.wa_phone_id}/messages",
+                f"{self._graph_api_base}/{clinic.wa_phone_id}/messages",
                 headers=self._headers(clinic),
                 json=payload,
             )
