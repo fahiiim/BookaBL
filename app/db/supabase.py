@@ -1,7 +1,9 @@
 """Production database adapter backed by the asynchronous Supabase client."""
 
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 from uuid import UUID
 
@@ -18,9 +20,14 @@ from app.domain.models import (
     Clinic,
     ConversationState,
     DomainModel,
+    FAQEntry,
     FinalizeBookingCommand,
+    JobStatus,
+    MessageLogEntry,
     NotificationOutbox,
+    OutboxStatus,
     Patient,
+    PatientConsent,
     Service,
     WebhookEvent,
 )
@@ -366,6 +373,225 @@ class SupabaseDatabase:
             raise
         return True
 
+    async def list_clinics(self) -> list[Clinic]:
+        result = await self._client.table("clinics").select("*").order("name").execute()
+        return [Clinic.model_validate(row) for row in self._rows(result.data)]
+
+    async def create_clinic(self, values: dict[str, Any]) -> Clinic:
+        result = await self._client.table("clinics").insert(self._json_values(values)).execute()
+        clinic = self._model_or_none(Clinic, result.data)
+        if clinic is None:
+            raise RuntimeError("Supabase did not return the created clinic")
+        return clinic
+
+    async def update_clinic(self, clinic_id: UUID, values: dict[str, Any]) -> Clinic:
+        result = (
+            await self._client.table("clinics")
+            .update(self._json_values(values))
+            .eq("id", str(clinic_id))
+            .execute()
+        )
+        clinic = self._model_or_none(Clinic, result.data)
+        if clinic is None:
+            raise RuntimeError("Clinic update did not return a row")
+        return clinic
+
+    async def admin_list_appointments(
+        self,
+        clinic_id: UUID,
+        *,
+        starts_at: datetime | None = None,
+        ends_at: datetime | None = None,
+        status: AppointmentStatus | None = None,
+        service_id: UUID | None = None,
+        patient_id: UUID | None = None,
+        search: str | None = None,
+        limit: int = 500,
+    ) -> list[BookingSummary]:
+        query = (
+            self._client.table("appointments")
+            .select("*,patients(*),services(*)")
+            .eq("clinic_id", str(clinic_id))
+        )
+        if starts_at is not None:
+            query = query.gte("starts_at", starts_at.isoformat())
+        if ends_at is not None:
+            query = query.lt("starts_at", ends_at.isoformat())
+        if status is not None:
+            query = query.eq("status", status.value)
+        if service_id is not None:
+            query = query.eq("service_id", str(service_id))
+        if patient_id is not None:
+            query = query.eq("patient_id", str(patient_id))
+        if search:
+            matching_patients = await self.list_patients(clinic_id, search)
+            if not matching_patients:
+                return []
+            query = query.in_("patient_id", [str(patient.id) for patient in matching_patients])
+        result = await query.order("starts_at", desc=True).limit(max(limit, 0)).execute()
+        return [self._summary(row) for row in self._rows(result.data)]
+
+    async def list_patients(self, clinic_id: UUID, search: str | None = None) -> list[Patient]:
+        result = await (
+            self._client.table("patients")
+            .select("*")
+            .eq("clinic_id", str(clinic_id))
+            .order("name")
+            .execute()
+        )
+        patients = [Patient.model_validate(row) for row in self._rows(result.data)]
+        needle = (search or "").casefold().strip()
+        if not needle:
+            return patients
+        return [
+            patient
+            for patient in patients
+            if needle in patient.name.casefold() or needle in patient.wa_number.casefold()
+        ]
+
+    async def create_service(self, values: dict[str, Any]) -> Service:
+        result = await self._client.table("services").insert(self._json_values(values)).execute()
+        service = self._model_or_none(Service, result.data)
+        if service is None:
+            raise RuntimeError("Supabase did not return the created service")
+        return service
+
+    async def update_service(self, service_id: UUID, values: dict[str, Any]) -> Service:
+        result = (
+            await self._client.table("services")
+            .update(self._json_values(values))
+            .eq("id", str(service_id))
+            .execute()
+        )
+        service = self._model_or_none(Service, result.data)
+        if service is None:
+            raise RuntimeError("Service update did not return a row")
+        return service
+
+    async def delete_service(self, service_id: UUID) -> None:
+        await self._client.table("services").delete().eq("id", str(service_id)).execute()
+
+    async def service_has_future_bookings(self, service_id: UUID, now: datetime) -> bool:
+        result = (
+            await self._client.table("appointments")
+            .select("id")
+            .eq("service_id", str(service_id))
+            .in_("status", [AppointmentStatus.BOOKED.value, AppointmentStatus.CONFIRMED.value])
+            .gt("starts_at", now.isoformat())
+            .limit(1)
+            .execute()
+        )
+        return bool(self._rows(result.data))
+
+    async def list_message_log(
+        self, clinic_id: UUID, *, patient_id: UUID | None = None, limit: int = 100
+    ) -> list[MessageLogEntry]:
+        query = self._client.table("message_log").select("*").eq("clinic_id", str(clinic_id))
+        if patient_id is not None:
+            query = query.eq("patient_id", str(patient_id))
+        result = await query.order("created_at", desc=True).limit(max(limit, 0)).execute()
+        return [MessageLogEntry.model_validate(row) for row in self._rows(result.data)]
+
+    async def list_outbox(
+        self, clinic_id: UUID, *, status: OutboxStatus | None = None, limit: int = 200
+    ) -> list[NotificationOutbox]:
+        query = (
+            self._client.table("notification_outbox").select("*").eq("clinic_id", str(clinic_id))
+        )
+        if status is not None:
+            query = query.eq("status", status.value)
+        result = await query.order("created_at", desc=True).limit(max(limit, 0)).execute()
+        return [NotificationOutbox.model_validate(row) for row in self._rows(result.data)]
+
+    async def get_outbox(self, outbox_id: UUID) -> NotificationOutbox | None:
+        result = (
+            await self._client.table("notification_outbox")
+            .select("*")
+            .eq("id", str(outbox_id))
+            .execute()
+        )
+        return self._model_or_none(NotificationOutbox, result.data)
+
+    async def list_jobs(
+        self, clinic_id: UUID, *, status: JobStatus | None = None, limit: int = 200
+    ) -> list[AutomationJob]:
+        query = self._client.table("automation_jobs").select("*").eq("clinic_id", str(clinic_id))
+        if status is not None:
+            query = query.eq("status", status.value)
+        result = await query.order("due_at", desc=True).limit(max(limit, 0)).execute()
+        return [AutomationJob.model_validate(row) for row in self._rows(result.data)]
+
+    async def get_job(self, job_id: UUID) -> AutomationJob | None:
+        result = (
+            await self._client.table("automation_jobs").select("*").eq("id", str(job_id)).execute()
+        )
+        return self._model_or_none(AutomationJob, result.data)
+
+    async def list_webhook_events(self, clinic_id: UUID, *, limit: int = 200) -> list[WebhookEvent]:
+        result = (
+            await self._client.table("webhook_events")
+            .select("*")
+            .eq("clinic_id", str(clinic_id))
+            .order("created_at", desc=True)
+            .limit(max(limit, 0))
+            .execute()
+        )
+        return [WebhookEvent.model_validate(row) for row in self._rows(result.data)]
+
+    async def list_patient_consents(
+        self,
+        clinic_id: UUID,
+        *,
+        patient_id: UUID | None = None,
+        appointment_id: UUID | None = None,
+    ) -> list[PatientConsent]:
+        query = self._client.table("patient_consents").select("*").eq("clinic_id", str(clinic_id))
+        if patient_id is not None:
+            query = query.eq("patient_id", str(patient_id))
+        if appointment_id is not None:
+            query = query.eq("appointment_id", str(appointment_id))
+        result = await query.order("consented_at", desc=True).execute()
+        return [PatientConsent.model_validate(row) for row in self._rows(result.data)]
+
+    async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
+        result = (
+            await self._client.table("faq_entries")
+            .select("*")
+            .eq("clinic_id", str(clinic_id))
+            .order("category")
+            .order("question")
+            .execute()
+        )
+        return [FAQEntry.model_validate(row) for row in self._rows(result.data)]
+
+    async def get_faq_entry(self, entry_id: UUID) -> FAQEntry | None:
+        result = (
+            await self._client.table("faq_entries").select("*").eq("id", str(entry_id)).execute()
+        )
+        return self._model_or_none(FAQEntry, result.data)
+
+    async def create_faq_entry(self, values: dict[str, Any]) -> FAQEntry:
+        result = await self._client.table("faq_entries").insert(self._json_values(values)).execute()
+        entry = self._model_or_none(FAQEntry, result.data)
+        if entry is None:
+            raise RuntimeError("Supabase did not return the created FAQ entry")
+        return entry
+
+    async def update_faq_entry(self, entry_id: UUID, values: dict[str, Any]) -> FAQEntry:
+        result = (
+            await self._client.table("faq_entries")
+            .update(self._json_values(values))
+            .eq("id", str(entry_id))
+            .execute()
+        )
+        entry = self._model_or_none(FAQEntry, result.data)
+        if entry is None:
+            raise RuntimeError("FAQ update did not return a row")
+        return entry
+
+    async def delete_faq_entry(self, entry_id: UUID) -> None:
+        await self._client.table("faq_entries").delete().eq("id", str(entry_id)).execute()
+
     @staticmethod
     def _rows(data: Any) -> list[dict[str, Any]]:
         if data is None:
@@ -375,6 +601,26 @@ class SupabaseDatabase:
         if isinstance(data, dict):
             return [cast(dict[str, Any], data)]
         raise TypeError(f"Unexpected Supabase response type: {type(data)!r}")
+
+    @classmethod
+    def _json_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {key: cls._json_value(value) for key, value in values.items()}
+
+    @classmethod
+    def _json_value(cls, value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, (datetime, date, time)):
+            return value.isoformat()
+        if isinstance(value, list):
+            return [cls._json_value(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): cls._json_value(item) for key, item in value.items()}
+        return value
 
     @classmethod
     def _model_or_none[ModelT: DomainModel](
