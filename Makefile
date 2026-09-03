@@ -6,7 +6,7 @@ setup:
 	$(PYTHON) -m pip install -e ".[dev]"
 
 lint:
-	$(PYTHON) -m ruff check .
+	$(PYTHON) -m ruff check app tests
 
 typecheck:
 	$(PYTHON) -m mypy app tests
