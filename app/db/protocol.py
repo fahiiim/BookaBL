@@ -57,6 +57,9 @@ class Database(Protocol):
     async def get_patient(self, patient_id: UUID) -> Patient | None:
         """Return a patient by primary key."""
 
+    async def update_patient_name(self, patient_id: UUID, name: str) -> Patient:
+        """Replace a patient's placeholder name with their consented typed name."""
+
     async def list_services(self, clinic_id: UUID) -> list[Service]:
         """List services configured for a clinic."""
 
@@ -231,6 +234,16 @@ class Database(Protocol):
         appointment_id: UUID | None = None,
     ) -> list[PatientConsent]:
         """List tenant consent records by patient or appointment."""
+
+    async def save_patient_consent(
+        self,
+        clinic_id: UUID,
+        patient_id: UUID,
+        consent_type: str,
+        consent_text: str,
+        consent_version: str,
+    ) -> PatientConsent:
+        """Persist a versioned POPIA consent decision for a patient."""
 
     async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
         """List FAQ entries for a clinic."""
