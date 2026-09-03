@@ -82,15 +82,29 @@ def test_trial_gate_blocks_only_after_configured_duration() -> None:
     assert expired.evaluate(clinic).reason == "trial_expired"
 
 
-def test_state_machine_rejects_skipping_medical_aid_steps() -> None:
+def test_state_machine_enforces_popia_consent_gate() -> None:
     assert (
         ConversationTransitions.validate(
-            ConversationStep.AWAIT_MA_NAME, ConversationStep.AWAIT_MA_NUMBER
+            ConversationStep.AWAIT_SLOT, ConversationStep.AWAIT_PAYMENT_TYPE
         )
-        is ConversationStep.AWAIT_MA_NUMBER
+        is ConversationStep.AWAIT_PAYMENT_TYPE
+    )
+    assert (
+        ConversationTransitions.validate(
+            ConversationStep.AWAIT_PAYMENT_TYPE,
+            ConversationStep.AWAIT_POPIA_MA_CONSENT,
+        )
+        is ConversationStep.AWAIT_POPIA_MA_CONSENT
+    )
+    assert (
+        ConversationTransitions.validate(
+            ConversationStep.AWAIT_POPIA_MA_CONSENT,
+            ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
+        )
+        is ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG
     )
     with pytest.raises(InvalidTransitionError):
         ConversationTransitions.validate(
-            ConversationStep.AWAIT_MA_NAME, ConversationStep.AWAIT_MA_DEPENDENT
+            ConversationStep.AWAIT_PAYMENT_TYPE,
+            ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
         )
-
