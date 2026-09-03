@@ -1,6 +1,7 @@
 """Deterministic WhatsApp booking conversation orchestration."""
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -28,6 +29,13 @@ from app.services.slot_engine import SlotEngine
 from app.services.trial_gate import TrialGate
 
 logger = logging.getLogger(__name__)
+
+_PATIENT_PLACEHOLDER = "WhatsApp patient"
+_CONSENT_VERSION = "v1"
+_MA_DETAILS_RETRY = (
+    "I couldn't read those details clearly. Please send them exactly as: \n"
+    "1. Name \n2. MA Number \n3. Dependent Code"
+)
 
 
 class BookingFlow:
@@ -57,7 +65,7 @@ class BookingFlow:
         """Handle one normalized inbound patient message."""
 
         patient = await self._database.get_or_create_patient(
-            clinic.id, message.from_number, message.profile_name
+            clinic.id, message.from_number, _PATIENT_PLACEHOLDER
         )
         await self._database.log_message(
             clinic.id,
@@ -90,14 +98,14 @@ class BookingFlow:
                 await self._handle_service(clinic, patient, state, message.text)
             case ConversationStep.AWAIT_SLOT:
                 await self._handle_slot(clinic, patient, state, message.text)
-            case ConversationStep.AWAIT_MA_NAME:
-                await self._handle_medical_aid_name(clinic, patient, state, message.text)
-            case ConversationStep.AWAIT_MA_NUMBER:
-                await self._handle_medical_aid_number(clinic, patient, state, message.text)
-            case ConversationStep.AWAIT_MA_DEPENDENT:
-                await self._handle_medical_aid_dependent(
-                    clinic, patient, state, message.text
-                )
+            case ConversationStep.AWAIT_PAYMENT_TYPE:
+                await self._handle_payment_type(clinic, patient, state, message.text)
+            case ConversationStep.AWAIT_POPIA_MA_CONSENT:
+                await self._handle_medical_aid_consent(clinic, patient, state, message.text)
+            case ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG:
+                await self._handle_medical_aid_details(clinic, patient, state, message.text)
+            case ConversationStep.AWAIT_CASH_NAME:
+                await self._handle_cash_name(clinic, patient, state, message.text)
 
     async def _handle_idle(
         self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
@@ -107,7 +115,7 @@ class BookingFlow:
             await self._offer_services(clinic, patient, state)
             return
         greeting = clinic.brand_voice or (
-            f"Hi {patient.name}! I can help you book a dental appointment. "
+            "Hi! I can help you book a dental appointment. "
             "Reply 'book appointment' to begin."
         )
         await self._reply_text(clinic, patient, greeting)
@@ -195,52 +203,109 @@ class BookingFlow:
         context["ends_at"] = self._iso_utc(
             starts_at + timedelta(minutes=service.duration_min)
         )
-        await self._save_state(state, ConversationStep.AWAIT_MA_NAME, context)
+        await self._save_state(state, ConversationStep.AWAIT_PAYMENT_TYPE, context)
+        await self._reply_buttons(
+            clinic,
+            patient,
+            "How will you pay for your appointment?",
+            [
+                ReplyButton("payment:medical_aid", "Medical Aid"),
+                ReplyButton("payment:cash", "Cash"),
+            ],
+        )
+
+    async def _handle_payment_type(
+        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
+    ) -> None:
+        choice = text.casefold().strip()
+        context = dict(state.slot)
+        if choice in {"payment:medical_aid", "medical aid"}:
+            context["payment_type"] = "medical_aid"
+            await self._save_state(
+                state, ConversationStep.AWAIT_POPIA_MA_CONSENT, context
+            )
+            await self._reply_text(clinic, patient, self._medical_aid_consent(clinic))
+            return
+        if choice in {"payment:cash", "cash"}:
+            context["payment_type"] = "cash"
+            await self._save_state(state, ConversationStep.AWAIT_CASH_NAME, context)
+            await self._reply_text(clinic, patient, self._cash_consent(clinic))
+            return
+        await self._reply_buttons(
+            clinic,
+            patient,
+            "Please choose Medical Aid or Cash.",
+            [
+                ReplyButton("payment:medical_aid", "Medical Aid"),
+                ReplyButton("payment:cash", "Cash"),
+            ],
+        )
+
+    async def _handle_medical_aid_consent(
+        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
+    ) -> None:
+        if text.casefold().strip() != "yes":
+            await self._save_state(state, ConversationStep.IDLE, {})
+            await self._reply_text(
+                clinic,
+                patient,
+                "No problem. We cannot complete the WhatsApp booking without your consent. "
+                "Please contact the clinic directly to book.",
+            )
+            return
+        await self._database.save_patient_consent(
+            clinic.id,
+            patient.id,
+            "medical_aid",
+            self._medical_aid_consent(clinic),
+            _CONSENT_VERSION,
+        )
+        await self._save_state(
+            state, ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG, dict(state.slot)
+        )
         await self._reply_text(
             clinic,
             patient,
-            "What is your medical aid provider? Reply 'self-pay' if you are paying yourself.",
+            "Thanks. Please send in 1 message:\n"
+            "1. Name + Surname\n"
+            "2. Medical aid no\n"
+            "3. Dependant code",
         )
 
-    async def _handle_medical_aid_name(
+    async def _handle_medical_aid_details(
         self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
     ) -> None:
-        if text.casefold().strip() in {"self-pay", "self pay", "cash", "none"}:
-            await self._finalize(clinic, patient, state, None, None, None)
+        details = self._parse_medical_aid_details(text)
+        if details is None:
+            await self._reply_text(clinic, patient, _MA_DETAILS_RETRY)
             return
-        if not text.strip():
-            await self._reply_text(clinic, patient, "Please enter a medical aid provider.")
-            return
-        context = dict(state.slot)
-        context["medical_aid_name"] = text.strip()[:100]
-        await self._save_state(state, ConversationStep.AWAIT_MA_NUMBER, context)
-        await self._reply_text(clinic, patient, "What is your medical aid membership number?")
-
-    async def _handle_medical_aid_number(
-        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
-    ) -> None:
-        if not text.strip():
-            await self._reply_text(clinic, patient, "Please enter your membership number.")
-            return
-        context = dict(state.slot)
-        context["medical_aid_number"] = text.strip()[:100]
-        await self._save_state(state, ConversationStep.AWAIT_MA_DEPENDENT, context)
-        await self._reply_text(clinic, patient, "What is the dependent code? (For example, 01)")
-
-    async def _handle_medical_aid_dependent(
-        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
-    ) -> None:
-        if not text.strip():
-            await self._reply_text(clinic, patient, "Please enter the dependent code.")
-            return
+        patient_full_name, medical_aid_number, dependent_code = details
+        patient = await self._database.update_patient_name(patient.id, patient_full_name)
         await self._finalize(
             clinic,
             patient,
             state,
-            self._optional_text(state.slot.get("medical_aid_name")),
-            self._optional_text(state.slot.get("medical_aid_number")),
-            text.strip()[:20],
+            None,
+            medical_aid_number,
+            dependent_code,
         )
+
+    async def _handle_cash_name(
+        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
+    ) -> None:
+        patient_full_name = text.strip()
+        if not patient_full_name:
+            await self._reply_text(clinic, patient, self._cash_consent(clinic))
+            return
+        await self._database.save_patient_consent(
+            clinic.id,
+            patient.id,
+            "cash",
+            self._cash_consent(clinic),
+            _CONSENT_VERSION,
+        )
+        patient = await self._database.update_patient_name(patient.id, patient_full_name)
+        await self._finalize(clinic, patient, state, None, None, None)
 
     async def _finalize(
         self,
@@ -494,6 +559,40 @@ class BookingFlow:
         return parsed.astimezone(UTC)
 
     @staticmethod
-    def _optional_text(value: object) -> str | None:
-        return str(value) if isinstance(value, str) and value else None
+    def _medical_aid_consent(clinic: Clinic) -> str:
+        return (
+            f"To confirm your booking at {clinic.name}, we need your name, surname, "
+            "medical aid no + dependant code to secure your slot + check benefits. "
+            "Info stays with our rooms only. Required to book. "
+            "Privacy: bookabl.co.za/privacy\n\n"
+            "Reply YES to continue"
+        )
 
+    @staticmethod
+    def _cash_consent(clinic: Clinic) -> str:
+        return (
+            f"Cash booking at {clinic.name} - we just need your name + surname to hold "
+            "your slot. Info stays with our rooms only.\n"
+            "Privacy: bookabl.co.za/privacy\n\n"
+            "Reply with your name + surname e.g. Thandi Nkosi"
+        )
+
+    @staticmethod
+    def _parse_medical_aid_details(text: str) -> tuple[str, str, str] | None:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) != 3:
+            return None
+        values: list[str] = []
+        labels = (
+            r"(?:name(?:\s*\+\s*surname)?|full\s+name)",
+            r"(?:medical\s+aid(?:\s+(?:no|number))?|ma\s+(?:no|number))",
+            r"(?:dependant|dependent)(?:\s+code)?",
+        )
+        for line, label in zip(lines, labels, strict=True):
+            value = re.sub(r"^\s*\d+\s*[.)-]\s*", "", line)
+            value = re.sub(rf"^\s*{label}\s*[:=-]\s*", "", value, flags=re.IGNORECASE)
+            value = value.strip()
+            if not value:
+                return None
+            values.append(value)
+        return values[0], values[1], values[2]
