@@ -64,7 +64,8 @@ Apply database files in this exact order in the Supabase SQL Editor:
 
 1. `migrations/0001_schema.sql`
 2. `migrations/0002_functions.sql`
-3. `scripts/seed.sql` only for a disposable development project
+3. `migrations/0004_admin.sql`
+4. `scripts/seed.sql` only for a disposable development project
 
 Alternatively, after installing and linking the Supabase CLI, run `make migrate`.
 
@@ -156,6 +157,31 @@ the scheduler sends an interactive session message. Google Calendar is optional;
   start `app.workers.runner` unless you intentionally want another queue consumer.
 - Failed outbox sends retry after 30 seconds, 2 minutes, 10 minutes, and 1 hour. A fifth failed
   attempt moves the item to `failed` and sends the owner a direct Telegram DLQ alert.
+
+## Admin dashboard
+
+BOOKABL includes a server-rendered administration dashboard at `/admin`. It uses Jinja templates,
+one responsive CSS file, signed HttpOnly sessions, and tenant-scoped database queries. The dashboard
+provides the day sheet, weekly and list booking views, appointment and patient records, services
+CRUD, no-code clinic onboarding, operations queues, webhook inspection, and a clinic FAQ manager.
+
+Configure dashboard access in `.env` before opening it:
+
+```dotenv
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=replace-with-a-long-random-password
+```
+
+The password signs the short-lived admin cookie and is never sent to a template. Production cookies
+are marked `Secure`; every write form also carries a session-bound CSRF token. Select a clinic from
+the top bar to keep every page and mutation scoped to that tenant.
+
+> Screenshot placeholder — The Day Sheet overview in the Heritage Teal & Brass theme.
+
+> Screenshot placeholder — Weekly booking strip and appointment detail record.
+
+Apply `migrations/0004_admin.sql` before using FAQ and consent views against Supabase. The migration
+adds tenant-scoped FAQ entries, patient consent records, and `clinics.google_review_url`.
 
 ## Assumptions
 
