@@ -78,6 +78,7 @@ class Clinic(DomainModel):
     wa_token_enc: str | None = None
     telegram_chat_id: str | None = None
     google_calendar_id: str | None = None
+    google_review_url: str | None = None
     timezone: str = "Africa/Johannesburg"
     work_start: time = time(8)
     work_end: time = time(17)
@@ -212,3 +213,41 @@ class BookingSummary(DomainModel):
     appointment: Appointment
     patient: Patient
     service: Service
+
+
+class MessageLogEntry(DomainModel):
+    """One persisted inbound or outbound conversation message."""
+
+    id: UUID
+    clinic_id: UUID
+    patient_id: UUID | None = None
+    channel: str
+    direction: str
+    body: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class PatientConsent(DomainModel):
+    """A versioned consent record associated with a patient and appointment."""
+
+    id: UUID
+    clinic_id: UUID
+    patient_id: UUID
+    appointment_id: UUID | None = None
+    consent_type: str
+    consent_text: str
+    consent_version: str
+    consented_at: datetime
+
+
+class FAQEntry(DomainModel):
+    """A tenant-scoped FAQ used by the receptionist knowledge base."""
+
+    id: UUID
+    clinic_id: UUID
+    question: str
+    answer: str
+    category: str
+    active: bool = True
+    created_at: datetime
