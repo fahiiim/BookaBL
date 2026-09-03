@@ -17,30 +17,35 @@ class ConversationTransitions:
             {ConversationStep.AWAIT_SERVICE, ConversationStep.AWAIT_SLOT, ConversationStep.IDLE}
         ),
         ConversationStep.AWAIT_SLOT: frozenset(
-            {ConversationStep.AWAIT_SLOT, ConversationStep.AWAIT_MA_NAME, ConversationStep.IDLE}
-        ),
-        ConversationStep.AWAIT_MA_NAME: frozenset(
             {
-                ConversationStep.AWAIT_MA_NAME,
-                ConversationStep.AWAIT_MA_NUMBER,
+                ConversationStep.AWAIT_SLOT,
+                ConversationStep.AWAIT_PAYMENT_TYPE,
+                ConversationStep.IDLE,
+            }
+        ),
+        ConversationStep.AWAIT_PAYMENT_TYPE: frozenset(
+            {
+                ConversationStep.AWAIT_POPIA_MA_CONSENT,
+                ConversationStep.AWAIT_CASH_NAME,
                 ConversationStep.AWAIT_SLOT,
                 ConversationStep.IDLE,
             }
         ),
-        ConversationStep.AWAIT_MA_NUMBER: frozenset(
+        ConversationStep.AWAIT_POPIA_MA_CONSENT: frozenset(
             {
-                ConversationStep.AWAIT_MA_NUMBER,
-                ConversationStep.AWAIT_MA_DEPENDENT,
+                ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
                 ConversationStep.AWAIT_SLOT,
                 ConversationStep.IDLE,
             }
         ),
-        ConversationStep.AWAIT_MA_DEPENDENT: frozenset(
+        ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG: frozenset(
             {
-                ConversationStep.AWAIT_MA_DEPENDENT,
                 ConversationStep.AWAIT_SLOT,
                 ConversationStep.IDLE,
             }
+        ),
+        ConversationStep.AWAIT_CASH_NAME: frozenset(
+            {ConversationStep.AWAIT_SLOT, ConversationStep.IDLE}
         ),
     }
 
