@@ -43,9 +43,9 @@ class NotificationFormatter:
         """Format owner booking text before the atomic appointment insert."""
 
         when = self._friendly_datetime(clinic, starts_at)
-        if medical_aid_name:
+        if medical_aid_name or medical_aid_number or dependent_code:
             medical_aid = (
-                f"Medical Aid: {medical_aid_name} | "
+                f"Medical Aid: {medical_aid_name or 'Provider not supplied'} | "
                 f"No: {medical_aid_number or '-'} | "
                 f"Dep: {dependent_code or '-'}"
             )
