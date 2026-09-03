@@ -15,11 +15,14 @@ from app.domain.models import (
     BookingSummary,
     Clinic,
     ConversationState,
+    FAQEntry,
     FinalizeBookingCommand,
     JobStatus,
+    MessageLogEntry,
     NotificationOutbox,
     OutboxStatus,
     Patient,
+    PatientConsent,
     Service,
     WebhookEvent,
 )
@@ -41,6 +44,8 @@ class InMemoryDatabase:
         self.jobs: dict[UUID, AutomationJob] = {}
         self.message_log: list[dict[str, Any]] = []
         self.daily_throttles: set[tuple[UUID, UUID, str, date]] = set()
+        self.consents: dict[UUID, PatientConsent] = {}
+        self.faq_entries: dict[UUID, FAQEntry] = {}
 
     def add_clinic(self, clinic: Clinic) -> None:
         """Seed a clinic for a test or local demonstration."""
@@ -114,9 +119,7 @@ class InMemoryDatabase:
                 update={"claimed_at": None, "last_error": error[:2000]}
             )
 
-    async def get_or_create_patient(
-        self, clinic_id: UUID, wa_number: str, name: str
-    ) -> Patient:
+    async def get_or_create_patient(self, clinic_id: UUID, wa_number: str, name: str) -> Patient:
         async with self._lock:
             existing = next(
                 (
@@ -465,9 +468,7 @@ class InMemoryDatabase:
         patient_id: UUID | None = None,
         payload: dict[str, Any] | None = None,
     ) -> AutomationJob:
-        existing = next(
-            (job for job in self.jobs.values() if job.dedupe_key == dedupe_key), None
-        )
+        existing = next((job for job in self.jobs.values() if job.dedupe_key == dedupe_key), None)
         if existing is not None:
             return existing
         job = AutomationJob(
@@ -490,3 +491,180 @@ class InMemoryDatabase:
             patient=self.patients[appointment.patient_id],
             service=self.services[appointment.service_id],
         )
+
+    async def list_clinics(self) -> list[Clinic]:
+        return sorted(self.clinics.values(), key=lambda clinic: clinic.name.casefold())
+
+    async def create_clinic(self, values: dict[str, Any]) -> Clinic:
+        async with self._lock:
+            clinic = Clinic.model_validate(values)
+            self.clinics[clinic.id] = clinic
+            return clinic
+
+    async def update_clinic(self, clinic_id: UUID, values: dict[str, Any]) -> Clinic:
+        async with self._lock:
+            current = self.clinics[clinic_id]
+            updated = Clinic.model_validate({**current.model_dump(), **values})
+            self.clinics[clinic_id] = updated
+            return updated
+
+    async def admin_list_appointments(
+        self,
+        clinic_id: UUID,
+        *,
+        starts_at: datetime | None = None,
+        ends_at: datetime | None = None,
+        status: AppointmentStatus | None = None,
+        service_id: UUID | None = None,
+        patient_id: UUID | None = None,
+        search: str | None = None,
+        limit: int = 500,
+    ) -> list[BookingSummary]:
+        needle = (search or "").casefold().strip()
+        matches: list[Appointment] = []
+        for appointment in self.appointments.values():
+            patient = self.patients.get(appointment.patient_id)
+            if appointment.clinic_id != clinic_id or patient is None:
+                continue
+            if starts_at is not None and appointment.starts_at < starts_at:
+                continue
+            if ends_at is not None and appointment.starts_at >= ends_at:
+                continue
+            if status is not None and appointment.status is not status:
+                continue
+            if service_id is not None and appointment.service_id != service_id:
+                continue
+            if patient_id is not None and appointment.patient_id != patient_id:
+                continue
+            if needle and needle not in patient.name.casefold() and needle not in patient.wa_number:
+                continue
+            matches.append(appointment)
+        matches.sort(key=lambda appointment: appointment.starts_at, reverse=True)
+        return [self._booking_summary(item) for item in matches[: max(limit, 0)]]
+
+    async def list_patients(self, clinic_id: UUID, search: str | None = None) -> list[Patient]:
+        needle = (search or "").casefold().strip()
+        patients = [
+            patient
+            for patient in self.patients.values()
+            if patient.clinic_id == clinic_id
+            and (
+                not needle
+                or needle in patient.name.casefold()
+                or needle in patient.wa_number.casefold()
+            )
+        ]
+        return sorted(patients, key=lambda patient: patient.name.casefold())
+
+    async def create_service(self, values: dict[str, Any]) -> Service:
+        async with self._lock:
+            service = Service.model_validate(values)
+            self.services[service.id] = service
+            return service
+
+    async def update_service(self, service_id: UUID, values: dict[str, Any]) -> Service:
+        async with self._lock:
+            current = self.services[service_id]
+            updated = Service.model_validate({**current.model_dump(), **values})
+            self.services[service_id] = updated
+            return updated
+
+    async def delete_service(self, service_id: UUID) -> None:
+        async with self._lock:
+            self.services.pop(service_id, None)
+
+    async def service_has_future_bookings(self, service_id: UUID, now: datetime) -> bool:
+        return any(
+            appointment.service_id == service_id
+            and appointment.starts_at > now
+            and appointment.status in {AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED}
+            for appointment in self.appointments.values()
+        )
+
+    async def list_message_log(
+        self, clinic_id: UUID, *, patient_id: UUID | None = None, limit: int = 100
+    ) -> list[MessageLogEntry]:
+        messages = [
+            MessageLogEntry.model_validate(item)
+            for item in self.message_log
+            if item["clinic_id"] == clinic_id
+            and (patient_id is None or item["patient_id"] == patient_id)
+        ]
+        messages.sort(key=lambda item: item.created_at, reverse=True)
+        return messages[: max(limit, 0)]
+
+    async def list_outbox(
+        self, clinic_id: UUID, *, status: OutboxStatus | None = None, limit: int = 200
+    ) -> list[NotificationOutbox]:
+        items = [
+            item
+            for item in self.outbox.values()
+            if item.clinic_id == clinic_id and (status is None or item.status is status)
+        ]
+        items.sort(key=lambda item: item.created_at, reverse=True)
+        return items[: max(limit, 0)]
+
+    async def get_outbox(self, outbox_id: UUID) -> NotificationOutbox | None:
+        return self.outbox.get(outbox_id)
+
+    async def list_jobs(
+        self, clinic_id: UUID, *, status: JobStatus | None = None, limit: int = 200
+    ) -> list[AutomationJob]:
+        jobs = [
+            job
+            for job in self.jobs.values()
+            if job.clinic_id == clinic_id and (status is None or job.status is status)
+        ]
+        jobs.sort(key=lambda job: job.due_at, reverse=True)
+        return jobs[: max(limit, 0)]
+
+    async def get_job(self, job_id: UUID) -> AutomationJob | None:
+        return self.jobs.get(job_id)
+
+    async def list_webhook_events(self, clinic_id: UUID, *, limit: int = 200) -> list[WebhookEvent]:
+        events = [event for event in self.events.values() if event.clinic_id == clinic_id]
+        events.sort(key=lambda event: event.created_at, reverse=True)
+        return events[: max(limit, 0)]
+
+    async def list_patient_consents(
+        self,
+        clinic_id: UUID,
+        *,
+        patient_id: UUID | None = None,
+        appointment_id: UUID | None = None,
+    ) -> list[PatientConsent]:
+        consents = [
+            consent
+            for consent in self.consents.values()
+            if consent.clinic_id == clinic_id
+            and (patient_id is None or consent.patient_id == patient_id)
+            and (appointment_id is None or consent.appointment_id == appointment_id)
+        ]
+        return sorted(consents, key=lambda consent: consent.consented_at, reverse=True)
+
+    async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
+        entries = [entry for entry in self.faq_entries.values() if entry.clinic_id == clinic_id]
+        return sorted(
+            entries,
+            key=lambda entry: (entry.category.casefold(), entry.question.casefold()),
+        )
+
+    async def get_faq_entry(self, entry_id: UUID) -> FAQEntry | None:
+        return self.faq_entries.get(entry_id)
+
+    async def create_faq_entry(self, values: dict[str, Any]) -> FAQEntry:
+        async with self._lock:
+            entry = FAQEntry.model_validate(values)
+            self.faq_entries[entry.id] = entry
+            return entry
+
+    async def update_faq_entry(self, entry_id: UUID, values: dict[str, Any]) -> FAQEntry:
+        async with self._lock:
+            current = self.faq_entries[entry_id]
+            updated = FAQEntry.model_validate({**current.model_dump(), **values})
+            self.faq_entries[entry_id] = updated
+            return updated
+
+    async def delete_faq_entry(self, entry_id: UUID) -> None:
+        async with self._lock:
+            self.faq_entries.pop(entry_id, None)
