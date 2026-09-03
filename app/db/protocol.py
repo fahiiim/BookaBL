@@ -12,9 +12,14 @@ from app.domain.models import (
     BookingSummary,
     Clinic,
     ConversationState,
+    FAQEntry,
     FinalizeBookingCommand,
+    JobStatus,
+    MessageLogEntry,
     NotificationOutbox,
+    OutboxStatus,
     Patient,
+    PatientConsent,
     Service,
     WebhookEvent,
 )
@@ -46,9 +51,7 @@ class Database(Protocol):
     async def release_event(self, message_id: str, error: str) -> None:
         """Release a failed event lease for a future attempt."""
 
-    async def get_or_create_patient(
-        self, clinic_id: UUID, wa_number: str, name: str
-    ) -> Patient:
+    async def get_or_create_patient(self, clinic_id: UUID, wa_number: str, name: str) -> Patient:
         """Resolve a clinic-scoped patient, creating one when absent."""
 
     async def get_patient(self, patient_id: UUID) -> Patient | None:
@@ -157,3 +160,89 @@ class Database(Protocol):
         self, clinic_id: UUID, patient_id: UUID, throttle_key: str, local_date: date
     ) -> bool:
         """Claim a once-per-local-day action, returning false if already claimed."""
+
+    async def list_clinics(self) -> list[Clinic]:
+        """List every clinic for multi-tenant administration."""
+
+    async def create_clinic(self, values: dict[str, Any]) -> Clinic:
+        """Create and return a clinic from validated administrative values."""
+
+    async def update_clinic(self, clinic_id: UUID, values: dict[str, Any]) -> Clinic:
+        """Update editable clinic settings and return the resulting clinic."""
+
+    async def admin_list_appointments(
+        self,
+        clinic_id: UUID,
+        *,
+        starts_at: datetime | None = None,
+        ends_at: datetime | None = None,
+        status: AppointmentStatus | None = None,
+        service_id: UUID | None = None,
+        patient_id: UUID | None = None,
+        search: str | None = None,
+        limit: int = 500,
+    ) -> list[BookingSummary]:
+        """List tenant appointments with the filters used by the admin dashboard."""
+
+    async def list_patients(self, clinic_id: UUID, search: str | None = None) -> list[Patient]:
+        """List tenant patients, optionally matching their name or WhatsApp number."""
+
+    async def create_service(self, values: dict[str, Any]) -> Service:
+        """Create a tenant service."""
+
+    async def update_service(self, service_id: UUID, values: dict[str, Any]) -> Service:
+        """Update an existing service."""
+
+    async def delete_service(self, service_id: UUID) -> None:
+        """Delete a service with no protected future bookings."""
+
+    async def service_has_future_bookings(self, service_id: UUID, now: datetime) -> bool:
+        """Return whether a service has future booked or confirmed appointments."""
+
+    async def list_message_log(
+        self, clinic_id: UUID, *, patient_id: UUID | None = None, limit: int = 100
+    ) -> list[MessageLogEntry]:
+        """List recent tenant messages, optionally for one patient."""
+
+    async def list_outbox(
+        self, clinic_id: UUID, *, status: OutboxStatus | None = None, limit: int = 200
+    ) -> list[NotificationOutbox]:
+        """List tenant outbox records for operations."""
+
+    async def get_outbox(self, outbox_id: UUID) -> NotificationOutbox | None:
+        """Return one outbox record."""
+
+    async def list_jobs(
+        self, clinic_id: UUID, *, status: JobStatus | None = None, limit: int = 200
+    ) -> list[AutomationJob]:
+        """List tenant automation jobs for operations."""
+
+    async def get_job(self, job_id: UUID) -> AutomationJob | None:
+        """Return one automation job."""
+
+    async def list_webhook_events(self, clinic_id: UUID, *, limit: int = 200) -> list[WebhookEvent]:
+        """List recent webhook events for a tenant."""
+
+    async def list_patient_consents(
+        self,
+        clinic_id: UUID,
+        *,
+        patient_id: UUID | None = None,
+        appointment_id: UUID | None = None,
+    ) -> list[PatientConsent]:
+        """List tenant consent records by patient or appointment."""
+
+    async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
+        """List FAQ entries for a clinic."""
+
+    async def get_faq_entry(self, entry_id: UUID) -> FAQEntry | None:
+        """Return one FAQ entry."""
+
+    async def create_faq_entry(self, values: dict[str, Any]) -> FAQEntry:
+        """Create a clinic FAQ entry."""
+
+    async def update_faq_entry(self, entry_id: UUID, values: dict[str, Any]) -> FAQEntry:
+        """Update a clinic FAQ entry."""
+
+    async def delete_faq_entry(self, entry_id: UUID) -> None:
+        """Delete a clinic FAQ entry."""
