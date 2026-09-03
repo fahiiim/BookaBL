@@ -102,13 +102,22 @@ class SupabaseDatabase:
     async def get_or_create_patient(
         self, clinic_id: UUID, wa_number: str, name: str
     ) -> Patient:
-        result = await self._client.table("patients").upsert(
-            {"clinic_id": str(clinic_id), "wa_number": wa_number, "name": name},
-            on_conflict="clinic_id,wa_number",
+        existing = (
+            await self._client.table("patients")
+            .select("*")
+            .eq("clinic_id", str(clinic_id))
+            .eq("wa_number", wa_number)
+            .execute()
+        )
+        patient = self._model_or_none(Patient, existing.data)
+        if patient is not None:
+            return patient
+        result = await self._client.table("patients").insert(
+            {"clinic_id": str(clinic_id), "wa_number": wa_number, "name": name}
         ).execute()
         patient = self._model_or_none(Patient, result.data)
         if patient is None:
-            raise RuntimeError("Supabase did not return the upserted patient")
+            raise RuntimeError("Supabase did not return the created patient")
         return patient
 
     async def get_patient(self, patient_id: UUID) -> Patient | None:
@@ -119,6 +128,18 @@ class SupabaseDatabase:
             .execute()
         )
         return self._model_or_none(Patient, result.data)
+
+    async def update_patient_name(self, patient_id: UUID, name: str) -> Patient:
+        result = (
+            await self._client.table("patients")
+            .update({"name": name})
+            .eq("id", str(patient_id))
+            .execute()
+        )
+        patient = self._model_or_none(Patient, result.data)
+        if patient is None:
+            raise RuntimeError("Patient name update did not return a row")
+        return patient
 
     async def list_services(self, clinic_id: UUID) -> list[Service]:
         result = (
@@ -552,6 +573,28 @@ class SupabaseDatabase:
             query = query.eq("appointment_id", str(appointment_id))
         result = await query.order("consented_at", desc=True).execute()
         return [PatientConsent.model_validate(row) for row in self._rows(result.data)]
+
+    async def save_patient_consent(
+        self,
+        clinic_id: UUID,
+        patient_id: UUID,
+        consent_type: str,
+        consent_text: str,
+        consent_version: str,
+    ) -> PatientConsent:
+        result = await self._client.table("patient_consents").insert(
+            {
+                "clinic_id": str(clinic_id),
+                "patient_id": str(patient_id),
+                "consent_type": consent_type,
+                "consent_text": consent_text,
+                "consent_version": consent_version,
+            }
+        ).execute()
+        consent = self._model_or_none(PatientConsent, result.data)
+        if consent is None:
+            raise RuntimeError("Supabase did not return the saved patient consent")
+        return consent
 
     async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
         result = (
