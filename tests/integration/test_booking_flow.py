@@ -14,7 +14,13 @@ from app.bootstrap import Runtime, build_runtime
 from app.core.clock import FrozenClock
 from app.core.config import Settings
 from app.db.memory import InMemoryDatabase
-from app.domain.models import AppointmentStatus, Clinic, ClinicStatus, Service
+from app.domain.models import (
+    AppointmentStatus,
+    Clinic,
+    ClinicStatus,
+    ConversationStep,
+    Service,
+)
 from app.main import create_app
 from pydantic import SecretStr
 
@@ -138,23 +144,34 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         slot_message = runtime.whatsapp.sent[-1]
         slot_buttons = cast(list[ReplyButton], slot_message["buttons"])
         await send_whatsapp(client, runtime, 3, slot_buttons[0].id, button=True)
-        await send_whatsapp(client, runtime, 4, "Discovery Health")
-        await send_whatsapp(client, runtime, 5, "1234567")
-        await send_whatsapp(client, runtime, 6, "01")
+        payment_message = runtime.whatsapp.sent[-1]
+        payment_buttons = cast(list[ReplyButton], payment_message["buttons"])
+        medical_aid = next(
+            button for button in payment_buttons if button.title == "Medical Aid"
+        )
+        await send_whatsapp(client, runtime, 4, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 5, "yEs")
+        await send_whatsapp(client, runtime, 6, "John Smith\n1234567\n01")
 
         assert len(runtime.database.appointments) == 1
         appointment = next(iter(runtime.database.appointments.values()))
         assert appointment.price == Decimal("850")
-        assert appointment.medical_aid_name == "Discovery Health"
+        assert appointment.medical_aid_name is None
         assert appointment.medical_aid_number == "1234567"
         assert appointment.dependent_code == "01"
         assert appointment.google_event_id is not None
+        patient = runtime.database.patients[appointment.patient_id]
+        assert patient.name == "John Smith"
+        consents = list(runtime.database.consents.values())
+        assert len(consents) == 1
+        assert consents[0].consent_type == "medical_aid"
+        assert consents[0].consent_version == "v1"
         assert len(runtime.database.jobs) == 3
         assert len(runtime.database.outbox) == 2
 
         assert await runtime.outbox_worker.run_once() == 2
         assert "🦷 New booking: John" in runtime.telegram.sent[-1]["text"]
-        assert "Medical Aid: Discovery Health | No: 1234567 | Dep: 01" in (
+        assert "Medical Aid: Provider not supplied | No: 1234567 | Dep: 01" in (
             runtime.telegram.sent[-1]["text"]
         )
 
@@ -163,7 +180,7 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
             json={"message": {"chat": {"id": 123456789}, "text": "/bookings"}},
         )
         assert telegram_response.json() == {"handled": True}
-        assert "John" in runtime.telegram.sent[-1]["text"]
+        assert "John Smith" in runtime.telegram.sent[-1]["text"]
 
         reminder_response = await client.post("/dev/trigger-due-jobs")
         assert reminder_response.status_code == 200
@@ -177,6 +194,99 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         await send_whatsapp(client, runtime, 7, confirm.id, button=True)
 
     assert runtime.database.appointments[appointment.id].status is AppointmentStatus.CONFIRMED
+
+
+async def begin_booking(
+    client: httpx.AsyncClient, runtime: Runtime
+) -> tuple[ReplyButton, UUID]:
+    """Advance a fresh test runtime through slot selection."""
+
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    await send_whatsapp(client, runtime, 1, "book appointment")
+    service_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
+    await send_whatsapp(client, runtime, 2, service_buttons[0].id, button=True)
+    slot_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
+    await send_whatsapp(client, runtime, 3, slot_buttons[0].id, button=True)
+    payment_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
+    patient_id = next(iter(runtime.database.patients))
+    return payment_buttons[0], patient_id
+
+
+@pytest.mark.asyncio
+async def test_medical_aid_no_aborts_booking_and_resets_state() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        medical_aid, patient_id = await begin_booking(client, runtime)
+        assert medical_aid.id == "payment:medical_aid"
+        await send_whatsapp(client, runtime, 4, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 5, "NO")
+
+    state = runtime.database.states[(CLINIC_ID, patient_id)]
+    assert state.state is ConversationStep.IDLE
+    assert state.slot == {}
+    assert runtime.database.appointments == {}
+    assert runtime.database.consents == {}
+    assert runtime.whatsapp.sent[-1]["text"] == (
+        "No problem. We cannot complete the WhatsApp booking without your consent. "
+        "Please contact the clinic directly to book."
+    )
+
+
+@pytest.mark.asyncio
+async def test_cash_path_saves_consent_and_leaves_medical_aid_null() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        _medical_aid, patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 4, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 5, "Thandi Nkosi")
+
+    appointment = next(iter(runtime.database.appointments.values()))
+    assert appointment.medical_aid_name is None
+    assert appointment.medical_aid_number is None
+    assert appointment.dependent_code is None
+    assert runtime.database.patients[patient_id].name == "Thandi Nkosi"
+    consent = next(iter(runtime.database.consents.values()))
+    assert consent.consent_type == "cash"
+    assert consent.consent_version == "v1"
+    assert runtime.database.states[(CLINIC_ID, patient_id)].state is ConversationStep.IDLE
+
+
+@pytest.mark.asyncio
+async def test_malformed_medical_aid_details_are_retried_in_same_state() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        medical_aid, patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 4, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 5, "YES")
+        await send_whatsapp(client, runtime, 6, "Thandi Nkosi\n1234567")
+
+    state = runtime.database.states[(CLINIC_ID, patient_id)]
+    assert state.state is ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG
+    assert runtime.database.appointments == {}
+    assert len(runtime.database.consents) == 1
+    assert runtime.whatsapp.sent[-1]["text"] == (
+        "I couldn't read those details clearly. Please send them exactly as: \n"
+        "1. Name \n2. MA Number \n3. Dependent Code"
+    )
 
 
 @pytest.mark.asyncio
