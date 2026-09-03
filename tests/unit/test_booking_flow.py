@@ -58,15 +58,14 @@ async def test_calendar_outage_does_not_rollback_booking_and_no_show_job_tags() 
         ConversationState(
             clinic_id=CLINIC_ID,
             patient_id=patient.id,
-            state=ConversationStep.AWAIT_MA_DEPENDENT,
+            state=ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
             slot={
                 "service_id": str(SERVICE_ID),
                 "starts_at": starts_at.isoformat().replace("+00:00", "Z"),
                 "ends_at": (starts_at + timedelta(minutes=30))
                 .isoformat()
                 .replace("+00:00", "Z"),
-                "medical_aid_name": "Discovery Health",
-                "medical_aid_number": "1234567",
+                "payment_type": "medical_aid",
             },
             updated_at=NOW,
         )
@@ -93,14 +92,16 @@ async def test_calendar_outage_does_not_rollback_booking_and_no_show_job_tags() 
             from_number=patient.wa_number,
             profile_name=patient.name,
             kind=MessageKind.TEXT,
-            text="01",
-            display_text="01",
+            text="John Smith\n1234567\n01",
+            display_text="John Smith\n1234567\n01",
             raw={"id": "wamid.1"},
         ),
     )
 
     appointment = next(iter(database.appointments.values()))
     assert appointment.status is AppointmentStatus.BOOKED
+    assert appointment.medical_aid_number == "1234567"
+    assert database.patients[patient.id].name == "John Smith"
     assert appointment.google_event_id is None
     assert any(job.job_type == "calendar_retry" for job in database.jobs.values())
     assert len(database.outbox) == 2
@@ -115,4 +116,3 @@ async def test_calendar_outage_does_not_rollback_booking_and_no_show_job_tags() 
         item.channel == "telegram" and str(item.payload.get("text", "")).startswith("No-show")
         for item in database.outbox.values()
     )
-
