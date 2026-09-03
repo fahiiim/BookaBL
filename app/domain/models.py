@@ -40,9 +40,10 @@ class ConversationStep(StrEnum):
     IDLE = "idle"
     AWAIT_SERVICE = "await_service"
     AWAIT_SLOT = "await_slot"
-    AWAIT_MA_NAME = "await_ma_name"
-    AWAIT_MA_NUMBER = "await_ma_number"
-    AWAIT_MA_DEPENDENT = "await_ma_dependent"
+    AWAIT_PAYMENT_TYPE = "await_payment_type"
+    AWAIT_POPIA_MA_CONSENT = "await_popia_ma_consent"
+    AWAIT_MA_DETAILS_SINGLE_MSG = "await_ma_details_single_msg"
+    AWAIT_CASH_NAME = "await_cash_name"
 
 
 class OutboxStatus(StrEnum):
