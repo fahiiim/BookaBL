@@ -130,15 +130,20 @@ class InMemoryDatabase:
                 None,
             )
             if existing is not None:
-                updated = existing.model_copy(update={"name": name or existing.name})
-                self.patients[existing.id] = updated
-                return updated
+                return existing
             patient = Patient(id=uuid4(), clinic_id=clinic_id, wa_number=wa_number, name=name)
             self.patients[patient.id] = patient
             return patient
 
     async def get_patient(self, patient_id: UUID) -> Patient | None:
         return self.patients.get(patient_id)
+
+    async def update_patient_name(self, patient_id: UUID, name: str) -> Patient:
+        async with self._lock:
+            patient = self.patients[patient_id]
+            updated = patient.model_copy(update={"name": name})
+            self.patients[patient_id] = updated
+            return updated
 
     async def list_services(self, clinic_id: UUID) -> list[Service]:
         return sorted(
@@ -641,6 +646,30 @@ class InMemoryDatabase:
             and (appointment_id is None or consent.appointment_id == appointment_id)
         ]
         return sorted(consents, key=lambda consent: consent.consented_at, reverse=True)
+
+    async def save_patient_consent(
+        self,
+        clinic_id: UUID,
+        patient_id: UUID,
+        consent_type: str,
+        consent_text: str,
+        consent_version: str,
+    ) -> PatientConsent:
+        async with self._lock:
+            patient = self.patients.get(patient_id)
+            if patient is None or patient.clinic_id != clinic_id:
+                raise ValueError("Patient does not belong to clinic")
+            consent = PatientConsent(
+                id=uuid4(),
+                clinic_id=clinic_id,
+                patient_id=patient_id,
+                consent_type=consent_type,
+                consent_text=consent_text,
+                consent_version=consent_version,
+                consented_at=self._clock.now(),
+            )
+            self.consents[consent.id] = consent
+            return consent
 
     async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
         entries = [entry for entry in self.faq_entries.values() if entry.clinic_id == clinic_id]
