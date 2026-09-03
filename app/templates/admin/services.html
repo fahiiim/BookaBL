@@ -1,0 +1,12 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import empty_state, csrf %}
+{% block title %}Services{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Clinical catalogue</p><h1>The Service Cabinet</h1><p>Keep appointment lengths and patient-facing prices precise.</p></div></header>
+{% if clinic %}
+<div class="content-grid services-layout">
+  <section class="card"><div class="card-heading"><div><p class="eyebrow">Catalogue</p><h2>Bookable services</h2></div></div>{% if services %}<div class="service-list">{% for service in services %}<form class="service-row" method="post" action="/admin/services/{{ service.id }}/edit"><input type="hidden" name="clinic_id" value="{{ clinic_id }}">{{ csrf(csrf_token) }}<label>Name<input name="name" value="{{ service.name }}" required></label><label>Minutes<input name="duration_min" type="number" min="5" step="5" value="{{ service.duration_min }}" required></label><label>Price (R)<input name="price" type="number" min="0" step="0.01" value="{{ service.price }}" required></label><button class="button button-secondary" type="submit">Save</button><button class="button button-danger-quiet" type="submit" formaction="/admin/services/{{ service.id }}/delete" data-confirm-button="Delete this service? This cannot be undone.">Delete</button></form>{% endfor %}</div>{% else %}{{ empty_state('The cabinet is ready', 'Add a first service so patients have something inviting to book.', '✚') }}{% endif %}</section>
+  <aside class="card create-card"><p class="eyebrow">New entry</p><h2>Add a service</h2><form class="stack-form" method="post" action="/admin/services"><input type="hidden" name="clinic_id" value="{{ clinic_id }}">{{ csrf(csrf_token) }}<label>Service name<input name="name" placeholder="e.g. Hygiene consultation" required></label><div class="form-grid"><label>Duration<input name="duration_min" type="number" min="5" step="5" value="30" required></label><label>Price (R)<input name="price" type="number" min="0" step="0.01" placeholder="850.00" required></label></div><button class="button button-primary button-wide" type="submit">Add to cabinet</button></form><p class="form-note">Deletion is automatically blocked while a service has future bookings.</p></aside>
+</div>
+{% else %}{{ empty_state('Choose a clinic first', 'Services belong to one practice and never cross tenant boundaries.', '✚') }}{% endif %}
+{% endblock %}

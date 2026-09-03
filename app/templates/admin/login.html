@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Practice sign in · BookaBL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='/admin.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="login-seal">B</div>
+    <p class="eyebrow">The practice desk</p>
+    <h1>BookaBL</h1>
+    <p class="login-intro">Welcome back. Sign in to tend today’s appointments and patient care.</p>
+    {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+    {% if not configured %}<div class="form-alert" role="alert">Admin access is not configured. Add ADMIN_USERNAME and ADMIN_PASSWORD to the environment.</div>{% endif %}
+    <form method="post" action="/admin/login" class="stack-form">
+      <input type="hidden" name="next_path" value="{{ next_path }}">
+      <label>Username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="button button-primary button-wide" type="submit" {% if not configured %}disabled{% endif %}>Open the day sheet</button>
+    </form>
+    <p class="login-foot">Private practice administration · Signed session</p>
+  </main>
+</body>
+</html>

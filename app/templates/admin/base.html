@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0E5A4A">
+  <title>{% block title %}Admin{% endblock %} · BookaBL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='/admin.css') }}">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/admin{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}">
+      <span class="brand-mark">B</span>
+      <span><strong>BookaBL</strong><small>Practice desk</small></span>
+    </a>
+    <nav class="sidebar-nav" aria-label="Administration">
+      <a class="nav-item {% if active_nav == 'overview' %}active{% endif %}" href="/admin{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>⌂</span> Overview</a>
+      <a class="nav-item {% if active_nav == 'appointments' %}active{% endif %}" href="/admin/appointments{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>□</span> Bookings</a>
+      <a class="nav-item {% if active_nav == 'patients' %}active{% endif %}" href="/admin/patients{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>♙</span> Patients</a>
+      <a class="nav-item {% if active_nav == 'services' %}active{% endif %}" href="/admin/services{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>✚</span> Services</a>
+      <a class="nav-item {% if active_nav == 'clinics' %}active{% endif %}" href="/admin/clinics{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>⌂</span> Clinics</a>
+      <a class="nav-item {% if active_nav == 'ops' %}active{% endif %}" href="/admin/ops{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>◫</span> Operations</a>
+      <a class="nav-item {% if active_nav == 'faq' %}active{% endif %}" href="/admin/faq{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}"><span>?</span> FAQ manager</a>
+    </nav>
+    <div class="sidebar-note">
+      <span class="eyebrow">Reception desk</span>
+      <p>Calm operations. Warmer patient care.</p>
+    </div>
+  </aside>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <form class="clinic-switcher" method="get" action="{{ request.url.path }}">
+        <label for="clinic_id">Clinic</label>
+        <select id="clinic_id" name="clinic_id">
+          {% for item in clinics %}
+          <option value="{{ item.id }}" {% if clinic and item.id == clinic.id %}selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+        <button class="icon-button" type="submit" aria-label="Switch clinic">Go</button>
+      </form>
+      <form class="global-search" method="get" action="/admin/appointments">
+        {% if clinic_id %}<input type="hidden" name="clinic_id" value="{{ clinic_id }}">{% endif %}
+        <label class="sr-only" for="global-search">Search bookings</label>
+        <span aria-hidden="true">⌕</span>
+        <input id="global-search" name="search" type="search" placeholder="Search patients or numbers">
+      </form>
+      <div class="admin-chip"><span>{{ admin_name[:1]|upper }}</span>{{ admin_name }}</div>
+      <form method="post" action="/admin/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-quiet" type="submit">Log out</button>
+      </form>
+    </header>
+
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {% if notice %}
+  <div class="toast toast-{{ notice_kind }}" role="status">
+    <span>{{ notice }}</span><button type="button" aria-label="Dismiss">×</button>
+  </div>
+  {% endif %}
+
+  <dialog class="confirm-dialog" id="confirm-dialog">
+    <div class="dialog-seal">!</div>
+    <h2>Confirm this change</h2>
+    <p id="confirm-copy">This action will update the practice record.</p>
+    <div class="dialog-actions">
+      <button class="button button-quiet" type="button" data-dialog-cancel>Keep as is</button>
+      <button class="button button-danger" type="button" data-dialog-confirm>Yes, continue</button>
+    </div>
+  </dialog>
+
+  <script>
+  (() => {
+    const toast = document.querySelector('.toast');
+    if (toast) {
+      toast.querySelector('button')?.addEventListener('click', () => toast.remove());
+      window.setTimeout(() => toast.classList.add('toast-leaving'), 4200);
+    }
+    const dialog = document.getElementById('confirm-dialog');
+    let pendingForm = null;
+    document.querySelectorAll('form[data-confirm]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        pendingForm = form;
+        document.getElementById('confirm-copy').textContent = form.dataset.confirm;
+        dialog.showModal();
+      });
+    });
+    document.querySelectorAll('[data-confirm-button]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        pendingForm = { submit: () => button.form?.requestSubmit(button) };
+        document.getElementById('confirm-copy').textContent = button.dataset.confirmButton;
+        dialog.showModal();
+      });
+    });
+    dialog?.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => dialog.close());
+    dialog?.querySelector('[data-dialog-confirm]')?.addEventListener('click', () => {
+      dialog.close();
+      pendingForm?.submit();
+    });
+  })();
+  </script>
+</body>
+</html>

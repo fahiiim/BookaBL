@@ -1,0 +1,12 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import empty_state %}
+{% block title %}Patients{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Patient book</p><h1>The Patient Register</h1><p>A clear view of every relationship, visit history, and attendance note.</p></div></header>
+{% if clinic %}
+<form class="search-panel card" method="get"><input type="hidden" name="clinic_id" value="{{ clinic_id }}"><label class="sr-only" for="patient-search">Search patients</label><input id="patient-search" type="search" name="search" value="{{ search }}" placeholder="Search by name or WhatsApp number"><button class="button button-primary" type="submit">Search register</button></form>
+<section class="card table-card">
+  {% if patients %}<div class="table-wrap"><table><thead><tr><th>Patient</th><th>WhatsApp</th><th>Bookings</th><th>No-shows</th><th></th></tr></thead><tbody>{% for patient in patients %}<tr><td><a class="person-link" href="/admin/patients/{{ patient.id }}?clinic_id={{ clinic_id }}"><span class="mini-monogram">{{ patient.name[:1]|upper }}</span><strong>{{ patient.name }}</strong></a></td><td>{{ patient.wa_number }}</td><td>{{ booking_counts.get(patient.id, 0) }}</td><td><span class="count-pill {% if patient.no_show_count %}warning{% endif %}">{{ patient.no_show_count }}</span></td><td><a class="text-link" href="/admin/patients/{{ patient.id }}?clinic_id={{ clinic_id }}">View record →</a></td></tr>{% endfor %}</tbody></table></div>{% else %}{{ empty_state('No patients in the register', 'The first WhatsApp conversation will create a patient profile automatically.', '♙') }}{% endif %}
+</section>
+{% else %}{{ empty_state('A register needs a clinic', 'Onboard a practice to begin building its patient record.', '✚') }}{% endif %}
+{% endblock %}

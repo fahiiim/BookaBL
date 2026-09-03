@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import badge, empty_state %}
+{% block title %}Bookings{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Patient schedule</p><h1>The Booking Ledger</h1><p>Filter the record or read the coming week at a glance.</p></div></header>
+
+{% if clinic %}
+<form class="filter-bar card" method="get">
+  <input type="hidden" name="clinic_id" value="{{ clinic_id }}">
+  <label>From<input type="date" name="date_from" value="{{ filters.date_from|date_input }}"></label>
+  <label>To<input type="date" name="date_to" value="{{ filters.date_to|date_input }}"></label>
+  <label>Status<select name="status"><option value="">All statuses</option>{% for value in ['booked','confirmed','cancelled','no_show','completed'] %}<option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ value|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+  <label>Service<select name="service_id"><option value="">All services</option>{% for service in services %}<option value="{{ service.id }}" {% if filters.service_id == service.id|string %}selected{% endif %}>{{ service.name }}</option>{% endfor %}</select></label>
+  <label class="filter-search">Patient<input type="search" name="search" value="{{ filters.search }}" placeholder="Name or WhatsApp number"></label>
+  <button class="button button-primary" type="submit">Apply filters</button>
+</form>
+
+<div class="view-toolbar">
+  <div class="segmented"><a class="{% if view == 'calendar' %}active{% endif %}" href="?clinic_id={{ clinic_id }}&view=calendar&week={{ week_start }}">Week</a><a class="{% if view == 'list' %}active{% endif %}" href="?clinic_id={{ clinic_id }}&view=list">List</a></div>
+  {% if view == 'calendar' %}<div class="week-pager"><a href="?clinic_id={{ clinic_id }}&week={{ previous_week }}">← Earlier</a><strong>{{ week_start.strftime('%d %b') }} — {{ week_days[-1].date.strftime('%d %b %Y') }}</strong><a href="?clinic_id={{ clinic_id }}&week={{ next_week }}">Later →</a></div>{% endif %}
+</div>
+
+{% if view == 'calendar' %}
+<section class="week-strip card">
+  {% for day in week_days %}
+  <article class="calendar-day {% if day.is_today %}today{% endif %}">
+    <header><span>{{ day.date.strftime('%a') }}</span><strong>{{ day.date.strftime('%d') }}</strong></header>
+    <div class="day-slots">
+      {% for item in day.bookings %}<a class="calendar-chip status-{{ item.appointment.status.value }}" href="/admin/appointments/{{ item.appointment.id }}?clinic_id={{ clinic_id }}"><time>{{ item.appointment.starts_at|local_dt(clinic.timezone, '%H:%M') }}</time><span>{{ item.patient.name }}</span><small>{{ item.service.name }}</small></a>{% else %}<span class="day-empty">Open day</span>{% endfor %}
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="card table-card">
+  {% if bookings %}<div class="table-wrap"><table><thead><tr><th>Date & time</th><th>Patient</th><th>WhatsApp</th><th>Service</th><th>Price</th><th>Status</th></tr></thead><tbody>
+    {% for item in bookings %}<tr class="clickable-row"><td><a href="/admin/appointments/{{ item.appointment.id }}?clinic_id={{ clinic_id }}">{{ item.appointment.starts_at|local_dt(clinic.timezone) }}</a></td><td>{{ item.patient.name }}</td><td>{{ item.patient.wa_number }}</td><td>{{ item.service.name }}</td><td>{{ item.appointment.price|money }}</td><td>{{ badge(item.appointment.status.value) }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}{{ empty_state('No bookings found', 'Try a broader date range or clear one of the filters.', '⌕') }}{% endif %}
+</section>
+{% endif %}
+{% else %}{{ empty_state('Begin with a clinic', 'Onboard a practice and its services to open the appointment ledger.', '✚') }}{% endif %}
+{% endblock %}

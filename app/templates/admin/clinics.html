@@ -1,0 +1,7 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import badge, empty_state %}
+{% block title %}Clinics{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Multi-tenant control</p><h1>The Practice Portfolio</h1><p>Every clinic, commercial status, and onboarding milestone in one register.</p></div><a class="button button-primary" href="/admin/clinics/new{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}">Onboard a clinic</a></header>
+{% if clinics %}<section class="clinic-grid">{% for item in clinics %}<a class="card clinic-card" href="/admin/clinics/{{ item.id }}?clinic_id={{ item.id }}"><div class="clinic-card-top"><span class="clinic-seal">{{ item.name[:1]|upper }}</span>{{ badge(item.status.value if item.status.value in ['trial','active'] else 'inactive') }}</div><h2>{{ item.name }}</h2><p>{{ item.industry|title }} · {{ item.package|title }}</p><dl><div><dt>WhatsApp ID</dt><dd>{{ item.wa_phone_id }}</dd></div><div><dt>Timezone</dt><dd>{{ item.timezone }}</dd></div><div><dt>Trial</dt><dd>{% if item.status.value == 'trial' %}{{ trial_countdowns.get(item.id, 0) }} days left{% else %}—{% endif %}</dd></div></dl><span class="text-link">Open practice →</span></a>{% endfor %}</section>{% else %}{{ empty_state('Your first practice starts here', 'Onboard a clinic without code, then add its services and connection details.', '✚') }}<div class="empty-action"><a class="button button-primary" href="/admin/clinics/new">Onboard the first clinic</a></div>{% endif %}
+{% endblock %}

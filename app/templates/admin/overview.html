@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import badge, empty_state %}
+{% block title %}The Day Sheet{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><p class="eyebrow">Practice overview</p><h1>The Day Sheet</h1><p>One considered view of today’s patients, operations, and attention points.</p></div>
+  <a class="button button-primary" href="/admin/appointments{% if clinic_id %}?clinic_id={{ clinic_id }}{% endif %}">Open bookings</a>
+</header>
+
+<section class="stat-grid" aria-label="Practice statistics">
+  {% for stat in stats %}
+  <article class="stat-card"><strong>{{ stat.value }}</strong><span>{{ stat.label }}</span><small>{{ stat.delta }}</small></article>
+  {% endfor %}
+</section>
+
+{% if trial_warnings %}
+<section class="warning-ribbon">
+  <strong>Trial watch</strong>
+  {% for warning in trial_warnings %}<a href="/admin/clinics/{{ warning.clinic.id }}?clinic_id={{ warning.clinic.id }}">{{ warning.clinic.name }} · {{ warning.days }} day{% if warning.days != 1 %}s{% endif %} left</a>{% endfor %}
+</section>
+{% endif %}
+
+<div class="content-grid content-grid-wide">
+  <section class="card">
+    <div class="card-heading"><div><p class="eyebrow">Today</p><h2>Appointment ledger</h2></div><a href="/admin/appointments?clinic_id={{ clinic_id }}&view=list">View all</a></div>
+    {% if today_bookings %}
+    <div class="table-wrap"><table><thead><tr><th>Time</th><th>Patient</th><th>Service</th><th>Medical aid</th><th>Status</th></tr></thead><tbody>
+      {% for item in today_bookings %}
+      <tr class="clickable-row"><td><a href="/admin/appointments/{{ item.appointment.id }}?clinic_id={{ clinic_id }}">{{ item.appointment.starts_at|local_dt(clinic.timezone, '%H:%M') }}</a></td><td>{{ item.patient.name }}</td><td>{{ item.service.name }}</td><td>{{ 'On file' if item.appointment.medical_aid_name else 'Self-pay' }}</td><td>{{ badge(item.appointment.status.value) }}</td></tr>
+      {% endfor %}
+    </tbody></table></div>
+    {% else %}{{ empty_state('A clear day ahead', 'New appointments will gather here as patients book through WhatsApp.', '☼') }}{% endif %}
+  </section>
+
+  <aside class="card activity-card">
+    <div class="card-heading"><div><p class="eyebrow">Latest</p><h2>Practice pulse</h2></div></div>
+    {% if activities %}<ol class="activity-list">
+      {% for item in activities %}<li><span class="activity-dot activity-{{ item.kind }}"></span><div><strong>{{ item.title }}</strong><p>{{ item.detail|truncate(82) }}</p><time>{{ item.at|local_dt(clinic.timezone, '%d %b · %H:%M') }}</time></div></li>{% endfor %}
+    </ol>{% else %}{{ empty_state('Quiet for now', 'Messages and delivery events will form a useful trail here.', '·') }}{% endif %}
+  </aside>
+</div>
+{% endblock %}

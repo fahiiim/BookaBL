@@ -1,0 +1,15 @@
+{% macro badge(value) -%}
+<span class="badge badge-{{ value|replace('_', '-') }}">{{ value|replace('_', ' ')|title }}</span>
+{%- endmacro %}
+
+{% macro empty_state(title, copy, icon='✦') -%}
+<div class="empty-state">
+  <span class="empty-icon" aria-hidden="true">{{ icon }}</span>
+  <h3>{{ title }}</h3>
+  <p>{{ copy }}</p>
+</div>
+{%- endmacro %}
+
+{% macro csrf(value) -%}
+<input type="hidden" name="csrf_token" value="{{ value }}">
+{%- endmacro %}
