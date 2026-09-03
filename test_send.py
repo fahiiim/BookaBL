@@ -1,21 +1,28 @@
 import httpx
-from app.core.config import get_settings
+import os
 
-WABA_ID = "1013195638006734"
-GRAPH_API_VERSION = "v23.0"
+# Load token from .env
+token = ""
+for line in open(".env", encoding="utf-8"):
+    line = line.strip()
+    if line.startswith("WA_ACCESS_TOKEN="):
+        token = line.split("=", 1)[1].strip()
+        break
 
-settings = get_settings()
-if settings.wa_access_token is None:
-    raise SystemExit("WA_ACCESS_TOKEN is not configured in .env")
+print(f"Using token: {token[:20]}...{token[-10:]}")
 
-url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{WABA_ID}/subscribed_apps"
-response = httpx.get(
-    url,
-    headers={
-        "Authorization": f"Bearer {settings.wa_access_token.get_secret_value()}"
-    },
-    timeout=20,
-)
+url = "https://graph.facebook.com/v21.0/1270626386131979/messages"
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
+}
+payload = {
+    "messaging_product": "whatsapp",
+    "to": "8801400530058",
+    "type": "text",
+    "text": {"body": "Token check - this should arrive on your WhatsApp!"}
+}
 
-print(response.status_code)
-print(response.text)
+resp = httpx.post(url, headers=headers, json=payload)
+print(f"Status: {resp.status_code}")
+print(f"Response: {resp.text}")
