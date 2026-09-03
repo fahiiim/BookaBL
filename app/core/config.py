@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     api_base_url: str = "http://localhost:8000"
 
+    admin_username: SecretStr | None = None
+    admin_password: SecretStr | None = None
+
     worker_poll_seconds: float = 1.0
     worker_batch_size: int = 20
 
