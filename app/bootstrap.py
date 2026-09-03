@@ -144,6 +144,7 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
         api_context=ApiContext(
             settings=settings,
             whatsapp_ingress=ingress,
+            database=database,
             telegram_webhook=telegram_commands,
             scheduler=scheduler,
         ),
