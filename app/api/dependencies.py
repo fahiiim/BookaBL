@@ -6,6 +6,7 @@ from typing import Any, Protocol, cast
 from fastapi import Request
 
 from app.core.config import Settings
+from app.db.protocol import Database
 from app.services.whatsapp_ingress import WhatsAppIngress
 
 
@@ -29,6 +30,7 @@ class ApiContext:
 
     settings: Settings
     whatsapp_ingress: WhatsAppIngress
+    database: Database | None = None
     telegram_webhook: TelegramWebhookHandler | None = None
     scheduler: DueJobRunner | None = None
 
@@ -37,4 +39,3 @@ def get_api_context(request: Request) -> ApiContext:
     """Return the application-scoped API service context."""
 
     return cast(ApiContext, request.app.state.api_context)
-
