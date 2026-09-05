@@ -237,7 +237,7 @@ legend { margin-bottom: 9px; color: #485263; font-size: .72rem; font-weight: 700
 .mini-monogram, .clinic-seal { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; color: var(--teal); background: var(--teal-soft); font: 600 1rem "Fraunces", serif; }
 .count-pill { display: inline-grid; min-width: 28px; height: 28px; place-items: center; border-radius: 50%; color: var(--muted); background: #eef0f2; font-weight: 700; }
 .count-pill.warning { color: var(--brown); background: #fff0dc; }
-.services-layout, .faq-layout { grid-template-columns: minmax(0, 1.7fr) minmax(290px, .75fr); }
+.services-layout { grid-template-columns: minmax(0, 1.7fr) minmax(290px, .75fr); }
 .service-list { display: grid; }
 .service-row { display: grid; grid-template-columns: minmax(180px, 1fr) 95px 125px auto auto; align-items: end; gap: 10px; padding: 15px 20px; border-bottom: 1px solid var(--line); }
 .service-row:last-child { border-bottom: 0; }
@@ -270,14 +270,6 @@ legend { margin-bottom: 9px; color: #485263; font-size: .72rem; font-weight: 700
 .ops-table summary { color: var(--teal); cursor: pointer; font-size: .7rem; font-weight: 700; }
 .ops-table pre { max-width: 440px; max-height: 280px; overflow: auto; padding: 12px; border-radius: 8px; color: #d7eee7; background: #153b34; font-size: .65rem; white-space: pre-wrap; }
 
-.faq-list { display: grid; padding: 10px 20px 20px; }
-.faq-entry { border-bottom: 1px solid var(--line); }
-.faq-entry summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 4px; cursor: pointer; list-style: none; }
-.faq-entry summary::-webkit-details-marker { display: none; }
-.faq-entry summary small, .faq-entry summary strong { display: block; }
-.faq-entry summary small { margin-bottom: 4px; color: var(--brass); font-size: .62rem; font-weight: 700; text-transform: uppercase; }
-.faq-entry summary strong { font-size: .8rem; }
-.faq-entry form { padding: 8px 4px 20px; }
 
 .empty-state { padding: clamp(34px, 6vw, 70px) 24px; text-align: center; }
 .empty-icon { display: grid; width: 48px; height: 48px; margin: 0 auto 14px; place-items: center; border: 1px solid #dcca82; border-radius: 50%; color: var(--brass); background: #fffaf0; font: 600 1.3rem "Fraunces", serif; }
@@ -322,7 +314,7 @@ legend { margin-bottom: 9px; color: #485263; font-size: .72rem; font-weight: 700
   .sidebar-note { display: none; }
   .app-shell { margin-left: 0; }
   .topbar { top: 0; min-height: 62px; }
-  .content-grid, .content-grid-wide, .services-layout, .faq-layout, .detail-layout { grid-template-columns: 1fr; }
+  .content-grid, .content-grid-wide, .services-layout, .detail-layout { grid-template-columns: 1fr; }
   .detail-side { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .health-grid { grid-template-columns: 1fr; }
 }
