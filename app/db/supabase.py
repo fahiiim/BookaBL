@@ -20,7 +20,6 @@ from app.domain.models import (
     Clinic,
     ConversationState,
     DomainModel,
-    FAQEntry,
     FinalizeBookingCommand,
     JobStatus,
     MessageLogEntry,
@@ -596,44 +595,6 @@ class SupabaseDatabase:
             raise RuntimeError("Supabase did not return the saved patient consent")
         return consent
 
-    async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
-        result = (
-            await self._client.table("faq_entries")
-            .select("*")
-            .eq("clinic_id", str(clinic_id))
-            .order("category")
-            .order("question")
-            .execute()
-        )
-        return [FAQEntry.model_validate(row) for row in self._rows(result.data)]
-
-    async def get_faq_entry(self, entry_id: UUID) -> FAQEntry | None:
-        result = (
-            await self._client.table("faq_entries").select("*").eq("id", str(entry_id)).execute()
-        )
-        return self._model_or_none(FAQEntry, result.data)
-
-    async def create_faq_entry(self, values: dict[str, Any]) -> FAQEntry:
-        result = await self._client.table("faq_entries").insert(self._json_values(values)).execute()
-        entry = self._model_or_none(FAQEntry, result.data)
-        if entry is None:
-            raise RuntimeError("Supabase did not return the created FAQ entry")
-        return entry
-
-    async def update_faq_entry(self, entry_id: UUID, values: dict[str, Any]) -> FAQEntry:
-        result = (
-            await self._client.table("faq_entries")
-            .update(self._json_values(values))
-            .eq("id", str(entry_id))
-            .execute()
-        )
-        entry = self._model_or_none(FAQEntry, result.data)
-        if entry is None:
-            raise RuntimeError("FAQ update did not return a row")
-        return entry
-
-    async def delete_faq_entry(self, entry_id: UUID) -> None:
-        await self._client.table("faq_entries").delete().eq("id", str(entry_id)).execute()
 
     @staticmethod
     def _rows(data: Any) -> list[dict[str, Any]]:
