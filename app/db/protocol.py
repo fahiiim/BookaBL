@@ -12,7 +12,6 @@ from app.domain.models import (
     BookingSummary,
     Clinic,
     ConversationState,
-    FAQEntry,
     FinalizeBookingCommand,
     JobStatus,
     MessageLogEntry,
@@ -244,18 +243,3 @@ class Database(Protocol):
         consent_version: str,
     ) -> PatientConsent:
         """Persist a versioned POPIA consent decision for a patient."""
-
-    async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
-        """List FAQ entries for a clinic."""
-
-    async def get_faq_entry(self, entry_id: UUID) -> FAQEntry | None:
-        """Return one FAQ entry."""
-
-    async def create_faq_entry(self, values: dict[str, Any]) -> FAQEntry:
-        """Create a clinic FAQ entry."""
-
-    async def update_faq_entry(self, entry_id: UUID, values: dict[str, Any]) -> FAQEntry:
-        """Update a clinic FAQ entry."""
-
-    async def delete_faq_entry(self, entry_id: UUID) -> None:
-        """Delete a clinic FAQ entry."""
