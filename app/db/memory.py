@@ -15,7 +15,6 @@ from app.domain.models import (
     BookingSummary,
     Clinic,
     ConversationState,
-    FAQEntry,
     FinalizeBookingCommand,
     JobStatus,
     MessageLogEntry,
@@ -45,7 +44,6 @@ class InMemoryDatabase:
         self.message_log: list[dict[str, Any]] = []
         self.daily_throttles: set[tuple[UUID, UUID, str, date]] = set()
         self.consents: dict[UUID, PatientConsent] = {}
-        self.faq_entries: dict[UUID, FAQEntry] = {}
 
     def add_clinic(self, clinic: Clinic) -> None:
         """Seed a clinic for a test or local demonstration."""
@@ -670,30 +668,3 @@ class InMemoryDatabase:
             )
             self.consents[consent.id] = consent
             return consent
-
-    async def list_faq_entries(self, clinic_id: UUID) -> list[FAQEntry]:
-        entries = [entry for entry in self.faq_entries.values() if entry.clinic_id == clinic_id]
-        return sorted(
-            entries,
-            key=lambda entry: (entry.category.casefold(), entry.question.casefold()),
-        )
-
-    async def get_faq_entry(self, entry_id: UUID) -> FAQEntry | None:
-        return self.faq_entries.get(entry_id)
-
-    async def create_faq_entry(self, values: dict[str, Any]) -> FAQEntry:
-        async with self._lock:
-            entry = FAQEntry.model_validate(values)
-            self.faq_entries[entry.id] = entry
-            return entry
-
-    async def update_faq_entry(self, entry_id: UUID, values: dict[str, Any]) -> FAQEntry:
-        async with self._lock:
-            current = self.faq_entries[entry_id]
-            updated = FAQEntry.model_validate({**current.model_dump(), **values})
-            self.faq_entries[entry_id] = updated
-            return updated
-
-    async def delete_faq_entry(self, entry_id: UUID) -> None:
-        async with self._lock:
-            self.faq_entries.pop(entry_id, None)
