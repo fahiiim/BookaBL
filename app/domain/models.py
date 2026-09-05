@@ -240,15 +240,3 @@ class PatientConsent(DomainModel):
     consent_text: str
     consent_version: str
     consented_at: datetime
-
-
-class FAQEntry(DomainModel):
-    """A tenant-scoped FAQ used by the receptionist knowledge base."""
-
-    id: UUID
-    clinic_id: UUID
-    question: str
-    answer: str
-    category: str
-    active: bool = True
-    created_at: datetime
