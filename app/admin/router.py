@@ -40,7 +40,6 @@ FormText = Annotated[str, Form()]
 FormUUID = Annotated[UUID, Form()]
 FormInteger = Annotated[int, Form()]
 FormDecimal = Annotated[Decimal, Form()]
-FormBoolean = Annotated[bool, Form()]
 
 
 def _money(value: Decimal | int | float | str) -> str:
@@ -667,97 +666,6 @@ async def retry_job(
         raise HTTPException(status_code=404, detail="Automation job not found")
     await database.retry_job(job_id, _clock_now(request), "Manual retry", failed=False)
     return _redirect("/admin/ops", clinic_id, "Job queued for retry.", extra={"tab": "jobs"})
-
-
-@protected.get("/faq", response_class=HTMLResponse)
-async def faq(request: Request, clinic_id: UUID | None = None) -> Response:
-    """Render the tenant FAQ knowledge manager."""
-
-    database = _database(request)
-    context = await _page_context(request, database, clinic_id, "faq")
-    clinic = context["clinic"]
-    entries = await database.list_faq_entries(clinic.id) if isinstance(clinic, Clinic) else []
-    context.update(entries=entries)
-    return templates.TemplateResponse(request, "admin/faq.html", context)
-
-
-@protected.post("/faq")
-async def create_faq(
-    request: Request,
-    clinic_id: FormUUID,
-    question: FormText,
-    answer: FormText,
-    csrf_token: FormText,
-    category: FormText = "General",
-    active: FormBoolean = False,
-) -> Response:
-    """Create a tenant FAQ entry."""
-
-    verify_csrf(require_admin(request), csrf_token)
-    database = _database(request)
-    await _clinic_owned(database, clinic_id)
-    if not question.strip() or not answer.strip():
-        return _redirect("/admin/faq", clinic_id, "Question and answer are required.", "error")
-    await database.create_faq_entry(
-        {
-            "id": uuid4(),
-            "clinic_id": clinic_id,
-            "question": question.strip(),
-            "answer": answer.strip(),
-            "category": category.strip() or "General",
-            "active": active,
-            "created_at": _clock_now(request),
-        }
-    )
-    return _redirect("/admin/faq", clinic_id, "FAQ entry created.")
-
-
-@protected.post("/faq/{entry_id}/edit")
-async def edit_faq(
-    request: Request,
-    entry_id: UUID,
-    clinic_id: FormUUID,
-    question: FormText,
-    answer: FormText,
-    csrf_token: FormText,
-    category: FormText = "General",
-    active: FormBoolean = False,
-) -> Response:
-    """Update a tenant FAQ entry."""
-
-    verify_csrf(require_admin(request), csrf_token)
-    database = _database(request)
-    entry = await database.get_faq_entry(entry_id)
-    if entry is None or entry.clinic_id != clinic_id:
-        raise HTTPException(status_code=404, detail="FAQ entry not found")
-    await database.update_faq_entry(
-        entry_id,
-        {
-            "question": question.strip(),
-            "answer": answer.strip(),
-            "category": category.strip() or "General",
-            "active": active,
-        },
-    )
-    return _redirect("/admin/faq", clinic_id, "FAQ entry updated.")
-
-
-@protected.post("/faq/{entry_id}/delete")
-async def delete_faq(
-    request: Request,
-    entry_id: UUID,
-    clinic_id: FormUUID,
-    csrf_token: FormText,
-) -> Response:
-    """Delete a tenant FAQ entry."""
-
-    verify_csrf(require_admin(request), csrf_token)
-    database = _database(request)
-    entry = await database.get_faq_entry(entry_id)
-    if entry is None or entry.clinic_id != clinic_id:
-        raise HTTPException(status_code=404, detail="FAQ entry not found")
-    await database.delete_faq_entry(entry_id)
-    return _redirect("/admin/faq", clinic_id, "FAQ entry deleted.")
 
 
 router.include_router(protected)
