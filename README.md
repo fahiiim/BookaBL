@@ -6,7 +6,7 @@ conversation, stores bookings in Supabase, mirrors them to Google Calendar when 
 and notifies clinic owners through Telegram.
 
 Only M1 is implemented. Waitlists, review and recall campaigns, payments, an admin dashboard,
-deployment automation, and spreadsheet FAQs are intentionally absent.
+and deployment automation are intentionally absent.
 
 ## What is included
 
@@ -163,7 +163,7 @@ the scheduler sends an interactive session message. Google Calendar is optional;
 BOOKABL includes a server-rendered administration dashboard at `/admin`. It uses Jinja templates,
 one responsive CSS file, signed HttpOnly sessions, and tenant-scoped database queries. The dashboard
 provides the day sheet, weekly and list booking views, appointment and patient records, services
-CRUD, no-code clinic onboarding, operations queues, webhook inspection, and a clinic FAQ manager.
+CRUD, no-code clinic onboarding, operations queues, and webhook inspection.
 
 Configure dashboard access in `.env` before opening it:
 
@@ -180,8 +180,8 @@ the top bar to keep every page and mutation scoped to that tenant.
 
 > Screenshot placeholder — Weekly booking strip and appointment detail record.
 
-Apply `migrations/0004_admin.sql` before using FAQ and consent views against Supabase. The migration
-adds tenant-scoped FAQ entries, patient consent records, and `clinics.google_review_url`.
+Apply `migrations/0004_admin.sql` before using consent views against Supabase. The migration adds
+patient consent records and `clinics.google_review_url`.
 
 ## Assumptions
 
