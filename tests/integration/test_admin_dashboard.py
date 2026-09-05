@@ -11,7 +11,6 @@ from app.db.memory import InMemoryDatabase
 from app.domain.models import (
     Clinic,
     ClinicStatus,
-    FAQEntry,
     FinalizeBookingCommand,
     PatientConsent,
     Service,
@@ -77,16 +76,6 @@ async def build_admin_api() -> tuple[object, InMemoryDatabase, UUID, UUID]:
         consented_at=NOW,
     )
     database.consents[consent.id] = consent
-    faq = FAQEntry(
-        id=uuid4(),
-        clinic_id=CLINIC_ID,
-        question="Do you accept medical aid?",
-        answer="Yes. Bring your membership details.",
-        category="Payments",
-        active=True,
-        created_at=NOW,
-    )
-    database.faq_entries[faq.id] = faq
     settings = Settings(
         _env_file=None,
         app_env="dev",
@@ -138,7 +127,6 @@ async def test_admin_login_and_every_page_renders() -> None:
             f"/admin/ops?{scoped}&tab=jobs",
             f"/admin/ops?{scoped}&tab=webhooks",
             f"/admin/ops?{scoped}&tab=no-shows",
-            f"/admin/faq?{scoped}",
         ]
         for path in paths:
             response = await client.get(path)
