@@ -176,7 +176,7 @@ The password signs the short-lived admin cookie and is never sent to a template.
 are marked `Secure`; every write form also carries a session-bound CSRF token. Select a clinic from
 the top bar to keep every page and mutation scoped to that tenant.
 
-> Screenshot placeholder — The Day Sheet overview in the Heritage Teal & Brass theme.
+> Screenshot placeholder — The Day Sheet overview in the Heritage Navy & Brass theme.
 
 > Screenshot placeholder — Weekly booking strip and appointment detail record.
 
