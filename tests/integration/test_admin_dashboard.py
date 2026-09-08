@@ -135,7 +135,7 @@ async def test_admin_login_and_every_page_renders() -> None:
             assert response.headers["cache-control"] == "no-store", path
         stylesheet = await client.get("/static/admin.css")
         assert stylesheet.status_code == 200
-        assert "--teal: #0e5a4a" in stylesheet.text
+        assert "--teal: #0b1f3a" in stylesheet.text
 
 
 @pytest.mark.asyncio
