@@ -1,6 +1,6 @@
 # BOOKABL
 
-BOOKABL Milestone 1 is a multi-tenant AI WhatsApp receptionist backend for South African
+BOOKABL Milestone 1 is a simple level AI WhatsApp receptionist backend for South African
 dental clinics. It accepts signed WhatsApp Cloud API webhooks, runs a deterministic booking
 conversation, stores bookings in Supabase, mirrors them to Google Calendar when configured,
 and notifies clinic owners through Telegram.
