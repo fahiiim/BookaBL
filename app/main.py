@@ -15,6 +15,7 @@ from app.admin import router as admin_router
 from app.api.dependencies import ApiContext
 from app.api.dev import router as dev_router
 from app.api.health import router as health_router
+from app.api.oauth import router as oauth_router
 from app.api.telegram import router as telegram_router
 from app.api.whatsapp import router as whatsapp_router
 from app.core.config import get_settings
@@ -51,6 +52,7 @@ def create_app(api_context: ApiContext | None = None) -> FastAPI:
     application.include_router(health_router)
     application.include_router(whatsapp_router)
     application.include_router(telegram_router)
+    application.include_router(oauth_router)
     application.include_router(admin_router)
     route_settings = api_context.settings if api_context else get_settings()
     if route_settings.app_env == "dev":
