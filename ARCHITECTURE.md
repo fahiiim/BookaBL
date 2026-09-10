@@ -64,7 +64,8 @@ finalization.
 1. Validates that the service belongs to the tenant and duration matches.
 2. Rejects overlaps against booked/confirmed appointments.
 3. Inserts the booked appointment with the service price snapshot and medical-aid values.
-4. Inserts configured reminder jobs and the `starts_at + 15 minutes` no-show job.
+4. Inserts configured reminder jobs, the `starts_at + 15 minutes` no-show job, and one idempotent
+   review request due two hours after the appointment ends.
 5. Inserts patient confirmation and owner Telegram outbox rows.
 
 Only after that transaction commits does the flow create the calendar event. Failure inserts an
@@ -83,6 +84,8 @@ Telegram DLQ alert.
 - `no_show_check`: the `mark_no_show` RPC changes only `booked` appointments, increments the
   patient's count atomically, and causes an owner alert.
 - `calendar_retry`: recreate the missing event and persist its provider ID.
+- `review_request`: skip cancelled/no-show bookings or clinics without a review URL; otherwise
+  enqueue the personalized Google Review link through the WhatsApp outbox.
 
 Confirm conditionally moves `booked -> confirmed`. Cancel conditionally moves open appointments to
 `cancelled` and alerts the owner. Reschedule cancels the old appointment and re-enters
@@ -97,6 +100,9 @@ are rows plus services, with no code branch or deployment.
 - Meta signatures use constant-time SHA-256 HMAC comparison over untouched request bytes.
 - Webhook message IDs and job dedupe keys enforce idempotency.
 - Supabase tables have RLS enabled and worker RPC execution is granted only to `service_role`.
+- `oauth_tokens` has one provider record per clinic. Refresh tokens are Fernet-encrypted at rest;
+  only the service-role backend can read or write the table, and anon/authenticated roles have no
+  grants.
 - Secrets are loaded from environment settings and are not logged or checked into Git.
 - Logs are JSON and bind `clinic_id` plus WhatsApp message ID through context variables.
 - Business timestamps come from the injected `Clock`; persisted timestamps are UTC, while display
@@ -112,4 +118,13 @@ constraints allow additional worker processes without duplicate concurrent claim
 calls and support media, busy periods, and injected failures. Unit tests cover security, slots,
 trial boundaries, transitions, atomic finalization, calendar failure, no-show behavior, and audio.
 Integration tests send signed ASGI webhooks through the real API and execute the actual workers.
+
+## Per-clinic Calendar adapter
+
+`GoogleCalendar` receives the database port, global Google OAuth client credentials, the Fernet key,
+and the injected clock. Each `free_busy` or `create_event` call uses the supplied `Clinic.id` to load
+only that tenant's `oauth_tokens` row. A disconnected clinic behaves as having no external calendar.
+An absent or expiring access token is refreshed with the decrypted clinic refresh token, persisted,
+and cached by clinic ID until 60 seconds before expiry. Google HTTP and response failures surface as
+`CalendarProviderError`, preserving the booking flow's existing calendar-failure isolation.
 
