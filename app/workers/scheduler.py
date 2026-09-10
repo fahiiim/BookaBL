@@ -1,4 +1,4 @@
-"""Reminder, no-show, and calendar-retry automation job scheduler."""
+"""Reminder, no-show, review, and calendar-retry automation job scheduler."""
 
 import asyncio
 import logging
@@ -68,6 +68,8 @@ class Scheduler:
             await self._tag_no_show(job)
         elif job.job_type == "calendar_retry":
             await self._retry_calendar(job)
+        elif job.job_type == "review_request":
+            await self._send_review_request(job)
         else:
             raise ValueError(f"Unknown automation job type: {job.job_type}")
 
@@ -154,7 +156,31 @@ class Scheduler:
             summary.appointment.starts_at,
             summary.appointment.ends_at,
         )
-        await self._database.set_google_event_id(summary.appointment.id, event_id)
+        if event_id is not None:
+            await self._database.set_google_event_id(summary.appointment.id, event_id)
+
+    async def _send_review_request(self, job: AutomationJob) -> None:
+        if job.appointment_id is None:
+            raise ValueError("Review request job has no appointment")
+        summary = await self._database.get_booking_summary(job.appointment_id)
+        if summary is None or summary.appointment.status in {
+            AppointmentStatus.CANCELLED,
+            AppointmentStatus.NO_SHOW,
+        }:
+            return
+        clinic = await self._database.get_clinic(job.clinic_id)
+        if clinic is None or not (review_url := (clinic.google_review_url or "").strip()):
+            return
+        text = (
+            f"Thanks for visiting {clinic.name}, {summary.patient.name}! We'd love your feedback. "
+            f"Please leave us a Google review here: {review_url}"
+        )
+        await self._database.enqueue_outbox(
+            clinic.id,
+            "whatsapp",
+            summary.patient.wa_number,
+            {"kind": "text", "text": text},
+        )
 
     @staticmethod
     def _reminder_template(templates: dict[str, Any]) -> tuple[str, str] | None:
