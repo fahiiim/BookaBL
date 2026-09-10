@@ -3,8 +3,10 @@
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
+import httpx
 from fastapi import Request
 
+from app.core.clock import Clock
 from app.core.config import Settings
 from app.db.protocol import Database
 from app.services.whatsapp_ingress import WhatsAppIngress
@@ -33,6 +35,8 @@ class ApiContext:
     database: Database | None = None
     telegram_webhook: TelegramWebhookHandler | None = None
     scheduler: DueJobRunner | None = None
+    clock: Clock | None = None
+    oauth_http_client: httpx.AsyncClient | None = None
 
 
 def get_api_context(request: Request) -> ApiContext:
