@@ -358,7 +358,8 @@ class BookingFlow:
             event_id = await self._calendar.create_event(
                 clinic, service.name, patient.name, appointment.starts_at, appointment.ends_at
             )
-            await self._database.set_google_event_id(appointment.id, event_id)
+            if event_id is not None:
+                await self._database.set_google_event_id(appointment.id, event_id)
         except Exception as exc:
             logger.warning("calendar_create_deferred", exc_info=exc)
             await self._database.enqueue_job(
