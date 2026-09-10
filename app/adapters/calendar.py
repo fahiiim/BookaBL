@@ -1,13 +1,18 @@
 """Calendar provider port with Google, deterministic stub, and fake adapters."""
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
+from pydantic import SecretStr
 
-from app.core.exceptions import ExternalServiceError
+from app.core.clock import Clock
+from app.core.encryption import decrypt_token
+from app.core.exceptions import CalendarProviderError, ExternalServiceError
+from app.db.protocol import Database
 from app.domain.models import BusyPeriod, Clinic
 
 
@@ -26,24 +31,29 @@ class CalendarProvider(Protocol):
         patient_name: str,
         starts_at: datetime,
         ends_at: datetime,
-    ) -> str:
-        """Create a calendar event and return its provider identifier."""
+    ) -> str | None:
+        """Create a calendar event, or return ``None`` when the clinic is disconnected."""
 
 
 class GoogleCalendar:
-    """Minimal Google Calendar adapter using an OAuth refresh token."""
+    """Google Calendar adapter resolving encrypted OAuth credentials per clinic."""
 
     def __init__(
         self,
+        database: Database,
         client_id: str,
         client_secret: str,
-        refresh_token: str,
+        encryption_key: SecretStr | str,
+        clock: Clock,
         client: httpx.AsyncClient | None = None,
     ) -> None:
+        self._database = database
         self._client_id = client_id
         self._client_secret = client_secret
-        self._refresh_token = refresh_token
+        self._encryption_key = encryption_key
+        self._clock = clock
         self._client = client or httpx.AsyncClient(timeout=20)
+        self._token_cache: dict[UUID, tuple[str, datetime]] = {}
 
     async def free_busy(
         self, clinic: Clinic, starts_at: datetime, ends_at: datetime
@@ -55,10 +65,13 @@ class GoogleCalendar:
             "timeZone": clinic.timezone,
             "items": [{"id": calendar_id}],
         }
+        headers = await self._headers(clinic)
+        if headers is None:
+            return []
         try:
             response = await self._client.post(
                 "https://www.googleapis.com/calendar/v3/freeBusy",
-                headers=await self._headers(),
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
@@ -68,7 +81,7 @@ class GoogleCalendar:
                 for period in periods
             ]
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ExternalServiceError("google_calendar", f"free/busy failed: {exc}") from exc
+            raise CalendarProviderError("google_calendar", f"free/busy failed: {exc}") from exc
 
     async def create_event(
         self,
@@ -77,7 +90,7 @@ class GoogleCalendar:
         patient_name: str,
         starts_at: datetime,
         ends_at: datetime,
-    ) -> str:
+    ) -> str | None:
         calendar_id = quote(clinic.google_calendar_id or "primary", safe="")
         payload = {
             "summary": summary,
@@ -85,33 +98,65 @@ class GoogleCalendar:
             "start": {"dateTime": starts_at.isoformat(), "timeZone": clinic.timezone},
             "end": {"dateTime": ends_at.isoformat(), "timeZone": clinic.timezone},
         }
+        headers = await self._headers(clinic)
+        if headers is None:
+            return None
         try:
             response = await self._client.post(
                 f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events",
-                headers=await self._headers(),
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
             return str(response.json()["id"])
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ExternalServiceError("google_calendar", f"event creation failed: {exc}") from exc
+            raise CalendarProviderError("google_calendar", f"event creation failed: {exc}") from exc
 
-    async def _headers(self) -> dict[str, str]:
+    async def _headers(self, clinic: Clinic) -> dict[str, str] | None:
+        token = await self._access_token(clinic)
+        if token is None:
+            return None
+        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    async def _access_token(self, clinic: Clinic) -> str | None:
+        now = self._clock.now()
+        stored = await self._database.get_oauth_token(clinic.id, "google")
+        if stored is None:
+            self._token_cache.pop(clinic.id, None)
+            return None
+        cached = self._token_cache.get(clinic.id)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+        safe_expiry = (
+            stored.token_expires_at - timedelta(seconds=60)
+            if stored.token_expires_at is not None
+            else None
+        )
+        if stored.access_token and safe_expiry is not None and safe_expiry > now:
+            self._token_cache[clinic.id] = (stored.access_token, safe_expiry)
+            return stored.access_token
+        refresh_token = decrypt_token(stored.refresh_token_encrypted, self._encryption_key)
         try:
             response = await self._client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
                     "client_id": self._client_id,
                     "client_secret": self._client_secret,
-                    "refresh_token": self._refresh_token,
+                    "refresh_token": refresh_token,
                     "grant_type": "refresh_token",
                 },
             )
             response.raise_for_status()
             token = str(response.json()["access_token"])
+            expires_in = max(int(response.json().get("expires_in", 3600)), 60)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ExternalServiceError("google_calendar", f"OAuth refresh failed: {exc}") from exc
-        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            raise CalendarProviderError("google_calendar", f"OAuth refresh failed: {exc}") from exc
+        expires_at = now + timedelta(seconds=expires_in)
+        await self._database.update_oauth_access_token(
+            clinic.id, "google", token, expires_at
+        )
+        self._token_cache[clinic.id] = (token, expires_at - timedelta(seconds=60))
+        return token
 
 
 class StubCalendar:
