@@ -16,6 +16,7 @@ from app.domain.models import (
     JobStatus,
     MessageLogEntry,
     NotificationOutbox,
+    OAuthToken,
     OutboxStatus,
     Patient,
     PatientConsent,
@@ -94,6 +95,38 @@ class Database(Protocol):
 
     async def set_google_event_id(self, appointment_id: UUID, event_id: str) -> None:
         """Attach a created Google Calendar event identifier."""
+
+    async def get_oauth_token(
+        self, clinic_id: UUID, provider: str = "google"
+    ) -> OAuthToken | None:
+        """Return one clinic's provider token without crossing tenant boundaries."""
+
+    async def upsert_oauth_token(
+        self,
+        clinic_id: UUID,
+        provider: str,
+        refresh_token_encrypted: str,
+        *,
+        access_token: str | None = None,
+        token_expires_at: datetime | None = None,
+        scope: str | None = None,
+    ) -> OAuthToken:
+        """Create or replace encrypted provider credentials for a clinic."""
+
+    async def update_oauth_access_token(
+        self,
+        clinic_id: UUID,
+        provider: str,
+        access_token: str,
+        token_expires_at: datetime,
+    ) -> OAuthToken:
+        """Persist a refreshed short-lived provider access token."""
+
+    async def delete_oauth_token(self, clinic_id: UUID, provider: str = "google") -> None:
+        """Delete one clinic's provider credentials."""
+
+    async def set_google_oauth_connected(self, clinic_id: UUID, connected: bool) -> Clinic:
+        """Update and return the clinic's Google OAuth connection flag."""
 
     async def get_appointment(self, appointment_id: UUID) -> Appointment | None:
         """Return an appointment by primary key."""
