@@ -166,7 +166,7 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         assert len(consents) == 1
         assert consents[0].consent_type == "medical_aid"
         assert consents[0].consent_version == "v1"
-        assert len(runtime.database.jobs) == 3
+        assert len(runtime.database.jobs) == 4
         assert len(runtime.database.outbox) == 2
 
         assert await runtime.outbox_worker.run_once() == 2
