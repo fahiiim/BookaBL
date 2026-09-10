@@ -52,13 +52,14 @@ def set_session_cookie(response: Response, settings: Settings, username: str) ->
         httponly=True,
         secure=settings.app_env == "prod",
         samesite="lax",
-        path="/admin",
+        path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
     """Expire the dashboard session cookie."""
 
+    response.delete_cookie(COOKIE_NAME, path="/")
     response.delete_cookie(COOKIE_NAME, path="/admin")
 
 
