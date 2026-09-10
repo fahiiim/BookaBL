@@ -19,6 +19,7 @@ from app.domain.models import (
     JobStatus,
     MessageLogEntry,
     NotificationOutbox,
+    OAuthToken,
     OutboxStatus,
     Patient,
     PatientConsent,
@@ -41,6 +42,7 @@ class InMemoryDatabase:
         self.events: dict[str, WebhookEvent] = {}
         self.outbox: dict[UUID, NotificationOutbox] = {}
         self.jobs: dict[UUID, AutomationJob] = {}
+        self.oauth_tokens: dict[tuple[UUID, str], OAuthToken] = {}
         self.message_log: list[dict[str, Any]] = []
         self.daily_throttles: set[tuple[UUID, UUID, str, date]] = set()
         self.consents: dict[UUID, PatientConsent] = {}
@@ -247,6 +249,14 @@ class InMemoryDatabase:
                 appointment_id=appointment.id,
                 patient_id=appointment.patient_id,
             )
+            self._insert_job(
+                clinic_id=clinic.id,
+                job_type="review_request",
+                due_at=appointment.ends_at + timedelta(hours=2),
+                dedupe_key=f"review:{appointment.id}",
+                appointment_id=appointment.id,
+                patient_id=appointment.patient_id,
+            )
             self._insert_outbox(
                 clinic.id, "whatsapp", command.whatsapp_to, command.whatsapp_payload
             )
@@ -262,6 +272,69 @@ class InMemoryDatabase:
             self.appointments[appointment_id] = appointment.model_copy(
                 update={"google_event_id": event_id}
             )
+
+    async def get_oauth_token(
+        self, clinic_id: UUID, provider: str = "google"
+    ) -> OAuthToken | None:
+        return self.oauth_tokens.get((clinic_id, provider))
+
+    async def upsert_oauth_token(
+        self,
+        clinic_id: UUID,
+        provider: str,
+        refresh_token_encrypted: str,
+        *,
+        access_token: str | None = None,
+        token_expires_at: datetime | None = None,
+        scope: str | None = None,
+    ) -> OAuthToken:
+        async with self._lock:
+            key = (clinic_id, provider)
+            current = self.oauth_tokens.get(key)
+            token = OAuthToken(
+                id=current.id if current else uuid4(),
+                clinic_id=clinic_id,
+                provider=provider,
+                refresh_token_encrypted=refresh_token_encrypted,
+                access_token=access_token,
+                token_expires_at=token_expires_at,
+                scope=scope,
+                created_at=current.created_at if current else self._clock.now(),
+                updated_at=self._clock.now(),
+            )
+            self.oauth_tokens[key] = token
+            return token
+
+    async def update_oauth_access_token(
+        self,
+        clinic_id: UUID,
+        provider: str,
+        access_token: str,
+        token_expires_at: datetime,
+    ) -> OAuthToken:
+        async with self._lock:
+            key = (clinic_id, provider)
+            current = self.oauth_tokens[key]
+            updated = current.model_copy(
+                update={
+                    "access_token": access_token,
+                    "token_expires_at": token_expires_at,
+                    "updated_at": self._clock.now(),
+                }
+            )
+            self.oauth_tokens[key] = updated
+            return updated
+
+    async def delete_oauth_token(self, clinic_id: UUID, provider: str = "google") -> None:
+        async with self._lock:
+            self.oauth_tokens.pop((clinic_id, provider), None)
+
+    async def set_google_oauth_connected(self, clinic_id: UUID, connected: bool) -> Clinic:
+        async with self._lock:
+            clinic = self.clinics[clinic_id]
+            updated = clinic.model_copy(update={"google_oauth_connected": connected})
+            self.clinics[clinic_id] = updated
+            return updated
 
     async def get_appointment(self, appointment_id: UUID) -> Appointment | None:
         return self.appointments.get(appointment_id)
