@@ -79,6 +79,7 @@ class Clinic(DomainModel):
     wa_token_enc: str | None = None
     telegram_chat_id: str | None = None
     google_calendar_id: str | None = None
+    google_oauth_connected: bool = False
     google_review_url: str | None = None
     timezone: str = "Africa/Johannesburg"
     work_start: time = time(8)
@@ -189,6 +190,20 @@ class BusyPeriod(DomainModel):
 
     starts_at: datetime
     ends_at: datetime
+
+
+class OAuthToken(DomainModel):
+    """Encrypted provider credentials scoped to one clinic."""
+
+    id: UUID
+    clinic_id: UUID
+    provider: str = "google"
+    refresh_token_encrypted: str
+    access_token: str | None = None
+    token_expires_at: datetime | None = None
+    scope: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class FinalizeBookingCommand(DomainModel):
