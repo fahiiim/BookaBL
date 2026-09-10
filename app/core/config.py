@@ -38,9 +38,10 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     telegram_bot_username: str | None = None
 
-    google_client_id: str | None = None
-    google_client_secret: SecretStr | None = None
-    google_refresh_token: SecretStr | None = None
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: SecretStr | None = None
+    google_oauth_redirect_uri: str = "https://bookabl.co.za/oauth/google/callback"
+    google_token_encryption_key: SecretStr | None = None
 
     api_base_url: str = "http://localhost:8000"
 
