@@ -1,0 +1,16 @@
+[Unit]
+Description=BookaBL background workers
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/srv/bookabl
+EnvironmentFile=/srv/bookabl/.env
+ExecStart=/srv/bookabl/.venv/bin/python -m app.workers.runner
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
