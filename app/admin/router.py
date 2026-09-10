@@ -557,9 +557,9 @@ async def clinic_detail(
         webhook=events[0] if events else None,
         last_sync=synced.appointment if synced else None,
         google_configured=bool(
-            get_api_context(request).settings.google_client_id
-            and get_api_context(request).settings.google_client_secret
-            and get_api_context(request).settings.google_refresh_token
+            get_api_context(request).settings.google_oauth_client_id
+            and get_api_context(request).settings.google_oauth_client_secret
+            and get_api_context(request).settings.google_token_encryption_key
         ),
     )
     return templates.TemplateResponse(request, "admin/clinic_form.html", context)
@@ -579,6 +579,26 @@ async def update_clinic(request: Request, editing_id: UUID) -> Response:
         return _redirect(f"/admin/clinics/{editing_id}", editing_id, str(exc), "error")
     await database.update_clinic(editing_id, values)
     return _redirect(f"/admin/clinics/{editing_id}", editing_id, "Clinic settings saved.")
+
+
+@protected.post("/clinics/{editing_id}/disconnect-calendar")
+async def disconnect_calendar(
+    request: Request,
+    editing_id: UUID,
+    csrf_token: FormText,
+) -> Response:
+    """Remove one clinic's Google token and mark its calendar disconnected."""
+
+    verify_csrf(require_admin(request), csrf_token)
+    database = _database(request)
+    await _clinic_owned(database, editing_id)
+    await database.delete_oauth_token(editing_id, "google")
+    await database.set_google_oauth_connected(editing_id, False)
+    return _redirect(
+        f"/admin/clinics/{editing_id}",
+        editing_id,
+        "Google Calendar disconnected.",
+    )
 
 
 @protected.post("/clinics/{editing_id}/test-alert")
