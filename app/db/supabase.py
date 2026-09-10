@@ -24,6 +24,7 @@ from app.domain.models import (
     JobStatus,
     MessageLogEntry,
     NotificationOutbox,
+    OAuthToken,
     OutboxStatus,
     Patient,
     PatientConsent,
@@ -240,6 +241,87 @@ class SupabaseDatabase:
         await self._client.table("appointments").update({"google_event_id": event_id}).eq(
             "id", str(appointment_id)
         ).execute()
+
+    async def get_oauth_token(
+        self, clinic_id: UUID, provider: str = "google"
+    ) -> OAuthToken | None:
+        result = (
+            await self._client.table("oauth_tokens")
+            .select("*")
+            .eq("clinic_id", str(clinic_id))
+            .eq("provider", provider)
+            .execute()
+        )
+        return self._model_or_none(OAuthToken, result.data)
+
+    async def upsert_oauth_token(
+        self,
+        clinic_id: UUID,
+        provider: str,
+        refresh_token_encrypted: str,
+        *,
+        access_token: str | None = None,
+        token_expires_at: datetime | None = None,
+        scope: str | None = None,
+    ) -> OAuthToken:
+        result = await self._client.table("oauth_tokens").upsert(
+            {
+                "clinic_id": str(clinic_id),
+                "provider": provider,
+                "refresh_token_encrypted": refresh_token_encrypted,
+                "access_token": access_token,
+                "token_expires_at": token_expires_at.isoformat() if token_expires_at else None,
+                "scope": scope,
+                "updated_at": self._clock.now().isoformat(),
+            },
+            on_conflict="clinic_id,provider",
+        ).execute()
+        token = self._model_or_none(OAuthToken, result.data)
+        if token is None:
+            raise RuntimeError("Supabase did not return the saved OAuth token")
+        return token
+
+    async def update_oauth_access_token(
+        self,
+        clinic_id: UUID,
+        provider: str,
+        access_token: str,
+        token_expires_at: datetime,
+    ) -> OAuthToken:
+        result = (
+            await self._client.table("oauth_tokens")
+            .update(
+                {
+                    "access_token": access_token,
+                    "token_expires_at": token_expires_at.isoformat(),
+                    "updated_at": self._clock.now().isoformat(),
+                }
+            )
+            .eq("clinic_id", str(clinic_id))
+            .eq("provider", provider)
+            .execute()
+        )
+        token = self._model_or_none(OAuthToken, result.data)
+        if token is None:
+            raise RuntimeError("OAuth access-token update did not return a row")
+        return token
+
+    async def delete_oauth_token(self, clinic_id: UUID, provider: str = "google") -> None:
+        await self._client.table("oauth_tokens").delete().eq(
+            "clinic_id", str(clinic_id)
+        ).eq("provider", provider).execute()
+
+    async def set_google_oauth_connected(self, clinic_id: UUID, connected: bool) -> Clinic:
+        result = (
+            await self._client.table("clinics")
+            .update({"google_oauth_connected": connected})
+            .eq("id", str(clinic_id))
+            .execute()
+        )
+        clinic = self._model_or_none(Clinic, result.data)
+        if clinic is None:
+            raise RuntimeError("Google OAuth connection update did not return a clinic")
+        return clinic
 
     async def get_appointment(self, appointment_id: UUID) -> Appointment | None:
         result = (
