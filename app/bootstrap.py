@@ -77,15 +77,27 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
     else:
         raise ConfigurationError("TELEGRAM_BOT_TOKEN is required in production")
 
-    if (
-        settings.google_client_id
-        and settings.google_client_secret
-        and settings.google_refresh_token
+    google_oauth_configured = bool(
+        settings.google_oauth_client_id and settings.google_oauth_client_secret
+    )
+    calendar: CalendarProvider
+    if google_oauth_configured and not settings.google_token_encryption_key:
+        if settings.app_env == "prod":
+            raise ConfigurationError(
+                "GOOGLE_TOKEN_ENCRYPTION_KEY is required when Google OAuth is configured"
+            )
+        calendar = StubCalendar()
+    elif (
+        settings.google_oauth_client_id
+        and settings.google_oauth_client_secret
+        and settings.google_token_encryption_key
     ):
-        calendar: CalendarProvider = GoogleCalendar(
-            settings.google_client_id,
-            settings.google_client_secret.get_secret_value(),
-            settings.google_refresh_token.get_secret_value(),
+        calendar = GoogleCalendar(
+            database,
+            settings.google_oauth_client_id,
+            settings.google_oauth_client_secret.get_secret_value(),
+            settings.google_token_encryption_key,
+            clock,
         )
     else:
         calendar = StubCalendar()
@@ -147,6 +159,7 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
             database=database,
             telegram_webhook=telegram_commands,
             scheduler=scheduler,
+            clock=clock,
         ),
         clock=clock,
         database=database,
