@@ -56,12 +56,12 @@ async def test_finalize_booking_is_atomic_and_rejects_conflict() -> None:
     appointment = await db.finalize_booking(command)
 
     assert appointment.price == Decimal("850")
-    assert len(db.jobs) == 3
+    assert len(db.jobs) == 4
     assert len(db.outbox) == 2
     with pytest.raises(BookingConflictError):
         await db.finalize_booking(command)
     assert len(db.appointments) == 1
-    assert len(db.jobs) == 3
+    assert len(db.jobs) == 4
     assert len(db.outbox) == 2
 
 
