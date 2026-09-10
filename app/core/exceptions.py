@@ -71,3 +71,16 @@ class ExternalServiceError(BookablError):
 
     def __str__(self) -> str:
         return f"{self.service}: {self.detail}"
+
+
+class CalendarProviderError(ExternalServiceError):
+    """A Google Calendar API or token refresh operation failed."""
+
+    code = "calendar_provider_error"
+
+
+class OAuthStateError(BookablError):
+    """A Google OAuth state token is invalid, expired, or malformed."""
+
+    code = "invalid_oauth_state"
+    status_code = 400
