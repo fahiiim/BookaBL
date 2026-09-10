@@ -28,7 +28,8 @@ and deployment automation are intentionally absent.
 - A Supabase project for production-style persistence.
 - Meta WhatsApp Cloud API and Telegram Bot credentials.
 - An OpenAI API key for structured intent output and voice-note transcription.
-- Optional Google OAuth client credentials and refresh token.
+- Optional Google OAuth client credentials and a Fernet encryption key; each clinic authorizes
+  its own calendar from the admin dashboard.
 - Optional Supabase CLI for `make migrate`; the SQL Editor route below needs no CLI.
 
 Never commit `.env`. The repository ignores it, and settings use `SecretStr` so secrets are not
@@ -65,7 +66,9 @@ Apply database files in this exact order in the Supabase SQL Editor:
 1. `migrations/0001_schema.sql`
 2. `migrations/0002_functions.sql`
 3. `migrations/0004_admin.sql`
-4. `scripts/seed.sql` only for a disposable development project
+4. `migrations/0005_review.sql`
+5. `migrations/0006_oauth.sql`
+6. `scripts/seed.sql` only for a disposable development project
 
 Alternatively, after installing and linking the Supabase CLI, run `make migrate`.
 
@@ -142,7 +145,7 @@ owner’s numeric chat ID. The owner must start the bot before Telegram can deli
 
 `work_days` use ISO weekday numbers. Reminder template configuration is optional; without it,
 the scheduler sends an interactive session message. Google Calendar is optional; when the three
-`GOOGLE_*` OAuth values are absent, a deterministic calendar stub is used.
+the Google OAuth application values are absent, a deterministic calendar stub is used.
 
 ## Operational checks
 
@@ -182,6 +185,52 @@ the top bar to keep every page and mutation scoped to that tenant.
 
 Apply `migrations/0004_admin.sql` before using consent views against Supabase. The migration adds
 patient consent records and `clinics.google_review_url`.
+
+## M2 features
+
+### Google Review automation
+
+Every finalized booking creates one idempotent `review_request` job due two hours after the
+appointment ends. At execution time the scheduler ignores cancelled and no-show appointments. If
+the clinic has a `google_review_url`, it queues a personalized WhatsApp request through the normal
+outbox; a missing URL safely completes the job without sending. Review jobs use the same concurrent
+claiming and 30-second, 2-minute, 10-minute, and 1-hour retry schedule as other automation jobs.
+
+### Per-clinic Google Calendar OAuth
+
+Google Calendar authorization is tenant-specific. The admin clinic page starts OAuth, and the
+callback stores only an encrypted refresh token plus Google's short-lived access token in
+`oauth_tokens`. Calendar availability, event creation, refresh, and caching always resolve the token
+using the current clinic ID. Disconnecting removes that clinic's token without affecting any other
+tenant.
+
+## Google OAuth setup
+
+1. In Google Cloud Console, create or select a project and enable the Google Calendar API.
+2. Configure the OAuth consent screen and add the accounts that may connect calendars while the
+   application remains in testing mode.
+3. Create an OAuth 2.0 Client ID of type **Web application**.
+4. Add `https://bookabl.co.za/oauth/google/callback` as an authorized redirect URI. Use the exact
+   HTTPS URI configured in `GOOGLE_OAUTH_REDIRECT_URI` for another environment.
+5. Set `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+   `GOOGLE_OAUTH_REDIRECT_URI`, and `GOOGLE_TOKEN_ENCRYPTION_KEY`, then restart the API and worker.
+6. Open a clinic in the admin dashboard and choose **Connect Google Calendar**. Google returns to
+   BOOKABL, which encrypts and stores the clinic's refresh token.
+
+The callback URI must use HTTPS. Never place OAuth tokens or the Supabase service-role key in
+templates, browser JavaScript, logs, or client-side storage.
+
+## Encryption key
+
+Generate the Fernet key once for each environment:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Store the output as `GOOGLE_TOKEN_ENCRYPTION_KEY` in the server's secret manager. Keep it stable:
+changing or losing it makes existing clinic refresh tokens unreadable and requires clinics to
+reconnect. Production startup rejects a configured Google OAuth integration without this key.
 
 ## Assumptions
 
