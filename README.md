@@ -17,7 +17,7 @@ and deployment automation are intentionally absent.
 - Three availability candidates combining clinic hours, Google free/busy, and open DB bookings.
 - One transactional `finalize_booking` RPC for the appointment, reminder/no-show jobs, and outbox.
 - Calendar failure isolation through durable `calendar_retry` jobs.
-- Telegram booking alerts and authorized `today's bookings` / `/bookings` commands.
+- Privacy-minimal Telegram alerts plus authorized daily, weekly, and monthly booking commands.
 - Confirm, reschedule, cancel, reminder, no-show, and patient no-show-count handling.
 - Optional WhatsApp voice-note transcription through OpenAI `whisper-1`.
 - Network-free fakes, a deterministic demo, and end-to-end signed-webhook acceptance tests.
