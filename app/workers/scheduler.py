@@ -151,10 +151,8 @@ class Scheduler:
             return
         event_id = await self._calendar.create_event(
             clinic,
-            summary.service.name,
-            summary.patient.name,
-            summary.appointment.starts_at,
-            summary.appointment.ends_at,
+            summary.patient,
+            summary.appointment,
         )
         if event_id is not None:
             await self._database.set_google_event_id(summary.appointment.id, event_id)
