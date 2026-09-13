@@ -98,6 +98,7 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
             settings.google_oauth_client_secret.get_secret_value(),
             settings.google_token_encryption_key,
             clock,
+            api_base_url=settings.api_base_url,
         )
     else:
         calendar = StubCalendar()
