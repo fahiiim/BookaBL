@@ -170,17 +170,37 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         assert len(runtime.database.outbox) == 2
 
         assert await runtime.outbox_worker.run_once() == 2
-        assert "🦷 New booking: John" in runtime.telegram.sent[-1]["text"]
-        assert "Medical Aid: Provider not supplied | No: 1234567 | Dep: 01" in (
-            runtime.telegram.sent[-1]["text"]
-        )
+        owner_alert = str(runtime.telegram.sent[-1]["text"])
+        assert owner_alert.startswith("NEW BOOKING - Test Dental\n")
+        assert "John S - Confirmed" in owner_alert
+        assert "Cleaning" not in owner_alert
+        assert "1234567" not in owner_alert
+        assert "John Smith" not in owner_alert
 
         telegram_response = await client.post(
             "/webhooks/telegram",
             json={"message": {"chat": {"id": 123456789}, "text": "/bookings"}},
         )
         assert telegram_response.json() == {"handled": True}
-        assert "John Smith" in runtime.telegram.sent[-1]["text"]
+        today_reply = str(runtime.telegram.sent[-1]["text"])
+        assert today_reply.startswith("TODAY ")
+        assert "John S" in today_reply
+        assert "John Smith" not in today_reply
+        assert "Cleaning" not in today_reply
+
+        weekly_response = await client.post(
+            "/webhooks/telegram",
+            json={"message": {"chat": {"id": 123456789}, "text": "weekly bookings"}},
+        )
+        assert weekly_response.json() == {"handled": True}
+        assert str(runtime.telegram.sent[-1]["text"]).startswith("LAST 7 DAYS")
+
+        monthly_response = await client.post(
+            "/webhooks/telegram",
+            json={"message": {"chat": {"id": 123456789}, "text": "monthly bookings"}},
+        )
+        assert monthly_response.json() == {"handled": True}
+        assert str(runtime.telegram.sent[-1]["text"]).startswith("LAST 30 DAYS")
 
         reminder_response = await client.post("/dev/trigger-due-jobs")
         assert reminder_response.status_code == 200
