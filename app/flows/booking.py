@@ -356,7 +356,7 @@ class BookingFlow:
 
         try:
             event_id = await self._calendar.create_event(
-                clinic, service.name, patient.name, appointment.starts_at, appointment.ends_at
+                clinic, patient, appointment
             )
             if event_id is not None:
                 await self._database.set_google_event_id(appointment.id, event_id)
