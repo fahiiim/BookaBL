@@ -128,3 +128,8 @@ An absent or expiring access token is refreshed with the decrypted clinic refres
 and cached by clinic ID until 60 seconds before expiry. Google HTTP and response failures surface as
 `CalendarProviderError`, preserving the booking flow's existing calendar-failure isolation.
 
+External owner surfaces deliberately minimize patient data. Telegram booking alerts and daily,
+seven-day, and thirty-day lists contain only appointment time plus first name and surname initials.
+Google Calendar event summaries and descriptions omit phone numbers, treatment/service names, and
+medical-aid data; the authenticated appointment URL points back to the secure dashboard record.
+
