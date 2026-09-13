@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import quote
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import httpx
 from pydantic import SecretStr
@@ -13,7 +14,8 @@ from app.core.clock import Clock
 from app.core.encryption import decrypt_token
 from app.core.exceptions import CalendarProviderError, ExternalServiceError
 from app.db.protocol import Database
-from app.domain.models import BusyPeriod, Clinic
+from app.domain.models import Appointment, BusyPeriod, Clinic, Patient
+from app.services.privacy import minimal_patient_name, short_date
 
 
 class CalendarProvider(Protocol):
@@ -27,10 +29,8 @@ class CalendarProvider(Protocol):
     async def create_event(
         self,
         clinic: Clinic,
-        summary: str,
-        patient_name: str,
-        starts_at: datetime,
-        ends_at: datetime,
+        patient: Patient,
+        appointment: Appointment,
     ) -> str | None:
         """Create a calendar event, or return ``None`` when the clinic is disconnected."""
 
@@ -46,6 +46,8 @@ class GoogleCalendar:
         encryption_key: SecretStr | str,
         clock: Clock,
         client: httpx.AsyncClient | None = None,
+        *,
+        api_base_url: str = "https://bookabl.co.za",
     ) -> None:
         self._database = database
         self._client_id = client_id
@@ -53,6 +55,7 @@ class GoogleCalendar:
         self._encryption_key = encryption_key
         self._clock = clock
         self._client = client or httpx.AsyncClient(timeout=20)
+        self._api_base_url = api_base_url.rstrip("/")
         self._token_cache: dict[UUID, tuple[str, datetime]] = {}
 
     async def free_busy(
@@ -86,17 +89,36 @@ class GoogleCalendar:
     async def create_event(
         self,
         clinic: Clinic,
-        summary: str,
-        patient_name: str,
-        starts_at: datetime,
-        ends_at: datetime,
+        patient: Patient,
+        appointment: Appointment,
     ) -> str | None:
         calendar_id = quote(clinic.google_calendar_id or "primary", safe="")
+        patient_name = minimal_patient_name(patient.name)
+        starts_at = appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
+        created_at = appointment.created_at.astimezone(ZoneInfo(clinic.timezone))
+        time_label = starts_at.strftime("%I:%M %p").lower()
+        appointment_url = (
+            f"{self._api_base_url}/admin/appointments/{appointment.id}"
+            f"?clinic_id={clinic.id}"
+        )
         payload = {
-            "summary": summary,
-            "description": f"BOOKABL appointment for {patient_name}",
-            "start": {"dateTime": starts_at.isoformat(), "timeZone": clinic.timezone},
-            "end": {"dateTime": ends_at.isoformat(), "timeZone": clinic.timezone},
+            "summary": f"{patient_name} - Confirmed",
+            "description": (
+                "Status: Confirmed via WhatsApp\n"
+                f"Booked: {created_at:%H:%M} {short_date(created_at)}\n"
+                f"Patient: {patient_name}\n"
+                f"Time: {time_label}\n"
+                f"Link: {appointment_url}\n\n"
+                "Full details are available in the secure BookaBL dashboard."
+            ),
+            "start": {
+                "dateTime": appointment.starts_at.isoformat(),
+                "timeZone": clinic.timezone,
+            },
+            "end": {
+                "dateTime": appointment.ends_at.isoformat(),
+                "timeZone": clinic.timezone,
+            },
         }
         headers = await self._headers(clinic)
         if headers is None:
@@ -171,13 +193,17 @@ class StubCalendar:
     async def create_event(
         self,
         clinic: Clinic,
-        summary: str,
-        patient_name: str,
-        starts_at: datetime,
-        ends_at: datetime,
+        patient: Patient,
+        appointment: Appointment,
     ) -> str:
         material = "|".join(
-            [str(clinic.id), summary, patient_name, starts_at.isoformat(), ends_at.isoformat()]
+            [
+                str(clinic.id),
+                str(appointment.id),
+                minimal_patient_name(patient.name),
+                appointment.starts_at.isoformat(),
+                appointment.ends_at.isoformat(),
+            ]
         )
         return f"stub-{hashlib.sha256(material.encode()).hexdigest()[:24]}"
 
@@ -206,24 +232,20 @@ class FakeCalendar(StubCalendar):
     async def create_event(
         self,
         clinic: Clinic,
-        summary: str,
-        patient_name: str,
-        starts_at: datetime,
-        ends_at: datetime,
+        patient: Patient,
+        appointment: Appointment,
     ) -> str:
         if self.fail_create:
             raise ExternalServiceError("fake_calendar", "create unavailable")
-        event_id = await super().create_event(
-            clinic, summary, patient_name, starts_at, ends_at
-        )
+        event_id = await super().create_event(clinic, patient, appointment)
         self.created.append(
             {
                 "event_id": event_id,
                 "clinic_id": clinic.id,
-                "summary": summary,
-                "patient_name": patient_name,
-                "starts_at": starts_at,
-                "ends_at": ends_at,
+                "patient_name": minimal_patient_name(patient.name),
+                "appointment_id": appointment.id,
+                "starts_at": appointment.starts_at,
+                "ends_at": appointment.ends_at,
             }
         )
         return event_id
