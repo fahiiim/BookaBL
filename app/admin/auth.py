@@ -96,7 +96,10 @@ def require_admin(request: Request) -> dict[str, Any]:
 
     session = read_session(request)
     if session is None:
-        return_to = quote(str(request.url.path), safe="/")
+        requested = str(request.url.path)
+        if request.url.query:
+            requested = f"{requested}?{request.url.query}"
+        return_to = quote(requested, safe="/")
         raise HTTPException(
             status_code=303,
             headers={"Location": f"/admin/login?next={return_to}"},
