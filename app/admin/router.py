@@ -282,10 +282,17 @@ async def appointment_detail(
     """Show one appointment, its patient, consent, and conversation history."""
 
     database = _database(request)
-    context = await _page_context(request, database, clinic_id, "appointments")
-    clinic = _require_selected_clinic(context)
     summary = await database.get_booking_summary(appointment_id)
-    if summary is None or summary.appointment.clinic_id != clinic.id:
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    context = await _page_context(
+        request,
+        database,
+        clinic_id or summary.appointment.clinic_id,
+        "appointments",
+    )
+    clinic = _require_selected_clinic(context)
+    if summary.appointment.clinic_id != clinic.id:
         raise HTTPException(status_code=404, detail="Appointment not found")
     context.update(
         summary=summary,
