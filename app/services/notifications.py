@@ -5,8 +5,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.clock import Clock
 from app.domain.models import Appointment, Clinic, Patient, Service
-
-EN_DASH = "\N{EN DASH}"
+from app.services.privacy import minimal_patient_name, short_date
 
 
 class NotificationFormatter:
@@ -18,7 +17,7 @@ class NotificationFormatter:
     def owner_new_booking(
         self, clinic: Clinic, patient: Patient, service: Service, appointment: Appointment
     ) -> str:
-        """Return the exact two-line owner booking notification style."""
+        """Return a privacy-minimal owner booking notification."""
 
         return self.owner_new_booking_details(
             clinic,
@@ -40,20 +39,14 @@ class NotificationFormatter:
         medical_aid_number: str | None,
         dependent_code: str | None,
     ) -> str:
-        """Format owner booking text before the atomic appointment insert."""
+        """Format an alert without treatment, contact, or medical-aid data."""
 
-        when = self._friendly_datetime(clinic, starts_at)
-        if medical_aid_name or medical_aid_number or dependent_code:
-            medical_aid = (
-                f"Medical Aid: {medical_aid_name or 'Provider not supplied'} | "
-                f"No: {medical_aid_number or '-'} | "
-                f"Dep: {dependent_code or '-'}"
-            )
-        else:
-            medical_aid = "Medical Aid: Self-pay"
+        del service, medical_aid_name, medical_aid_number, dependent_code
+        local = starts_at.astimezone(ZoneInfo(clinic.timezone))
         return (
-            f"🦷 New booking: {patient.name} {EN_DASH} {service.name} "
-            f"{EN_DASH} {when}\n{medical_aid}"
+            f"NEW BOOKING - {clinic.name}\n"
+            f"{short_date(local)} {local:%H:%M}\n"
+            f"{minimal_patient_name(patient.name)} - Confirmed"
         )
 
     def patient_confirmation(
@@ -79,15 +72,14 @@ class NotificationFormatter:
         service: Service,
         appointment: Appointment,
     ) -> str:
-        """Format a cancellation or no-show owner alert."""
+        """Format a privacy-minimal cancellation or no-show owner alert."""
 
+        del service
+        local = appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
         return (
-            f"{prefix}: {patient.name} {EN_DASH} {service.name} {EN_DASH} "
-            f"{self._friendly_when(clinic, appointment)}"
+            f"{prefix} - {minimal_patient_name(patient.name)} - "
+            f"{short_date(local)} {local:%H:%M}"
         )
-
-    def _friendly_when(self, clinic: Clinic, appointment: Appointment) -> str:
-        return self._friendly_datetime(clinic, appointment.starts_at)
 
     def _friendly_datetime(self, clinic: Clinic, starts_at: datetime) -> str:
         local = starts_at.astimezone(ZoneInfo(clinic.timezone))
