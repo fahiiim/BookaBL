@@ -1,5 +1,7 @@
+import json
 import re
 from datetime import UTC, datetime, time, timedelta
+from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
@@ -12,7 +14,7 @@ from app.core.clock import FrozenClock
 from app.core.config import Settings
 from app.core.encryption import decrypt_token, encrypt_token
 from app.db.memory import InMemoryDatabase
-from app.domain.models import Clinic, ClinicStatus
+from app.domain.models import Appointment, AppointmentStatus, Clinic, ClinicStatus, Patient
 from app.main import create_app
 from app.services.whatsapp_ingress import WhatsAppIngress
 from cryptography.fernet import Fernet
@@ -22,6 +24,9 @@ from pydantic import SecretStr
 NOW = datetime(2026, 8, 17, 8, tzinfo=UTC)
 CLINIC_A = UUID("00000000-0000-4000-8000-000000000001")
 CLINIC_B = UUID("00000000-0000-4000-8000-000000000002")
+PATIENT_ID = UUID("00000000-0000-4000-8000-000000000101")
+SERVICE_ID = UUID("00000000-0000-4000-8000-000000000201")
+APPOINTMENT_ID = UUID("00000000-0000-4000-8000-000000000301")
 
 
 def _settings(key: str) -> Settings:
@@ -49,6 +54,24 @@ def _clinic(clinic_id: UUID, *, connected: bool = False) -> Clinic:
         work_start=time(8),
         work_end=time(17),
         created_at=NOW,
+    )
+
+
+def _patient(clinic_id: UUID, name: str = "Thandi Nkosi") -> Patient:
+    return Patient(id=PATIENT_ID, clinic_id=clinic_id, wa_number="27820000000", name=name)
+
+
+def _appointment(clinic_id: UUID) -> Appointment:
+    return Appointment(
+        id=APPOINTMENT_ID,
+        clinic_id=clinic_id,
+        patient_id=PATIENT_ID,
+        service_id=SERVICE_ID,
+        starts_at=NOW,
+        ends_at=NOW + timedelta(minutes=30),
+        status=AppointmentStatus.BOOKED,
+        price=Decimal("850"),
+        created_at=NOW - timedelta(minutes=5),
     )
 
 
@@ -208,6 +231,16 @@ async def test_calendar_refreshes_per_clinic_token_and_isolates_tenants() -> Non
                 200, json={"access_token": "fresh-access", "expires_in": 3600}
             )
         assert request.headers["authorization"] == "Bearer fresh-access"
+        payload = json.loads(request.content)
+        assert payload["summary"] == "Thandi N - Confirmed"
+        description = str(payload["description"])
+        assert "Status: Confirmed via WhatsApp" in description
+        assert "Patient: Thandi N" in description
+        assert "Time: 10:00 am" in description
+        assert f"/admin/appointments/{APPOINTMENT_ID}?clinic_id={CLINIC_A}" in description
+        assert "Nkosi" not in description
+        assert "Cleaning" not in description
+        assert "27820000000" not in description
         return httpx.Response(200, json={"id": "event-a"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(google))
@@ -218,30 +251,25 @@ async def test_calendar_refreshes_per_clinic_token_and_isolates_tenants() -> Non
         SecretStr(key),
         clock,
         client,
+        api_base_url="https://bookabl.co.za",
     )
     try:
         event_id = await calendar.create_event(
             clinic_a,
-            "Cleaning",
-            "Thandi Nkosi",
-            NOW,
-            NOW + timedelta(minutes=30),
+            _patient(CLINIC_A),
+            _appointment(CLINIC_A),
         )
         refreshed = await database.get_oauth_token(CLINIC_A)
         isolated = await calendar.create_event(
             clinic_b,
-            "Cleaning",
-            "Other Patient",
-            NOW,
-            NOW + timedelta(minutes=30),
+            _patient(CLINIC_B, "Other Patient"),
+            _appointment(CLINIC_B),
         )
         await database.delete_oauth_token(CLINIC_A)
         disconnected = await calendar.create_event(
             clinic_a,
-            "Cleaning",
-            "Thandi Nkosi",
-            NOW,
-            NOW + timedelta(minutes=30),
+            _patient(CLINIC_A),
+            _appointment(CLINIC_A),
         )
 
         assert event_id == "event-a"
