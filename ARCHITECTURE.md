@@ -40,12 +40,14 @@ event_processor
 Conversation state is durable in `conversation_states`:
 
 ```text
-idle -> await_service -> await_slot -> await_ma_name
-                                      | self-pay -> finalize
-                                      v
-                              await_ma_number
-                                      v
-                              await_ma_dependent -> finalize -> idle
+idle -> entry choice -> service -> date -> time -> payment
+           |                                | cash -> consented name -> finalize
+           |                                v
+           |                         medical-aid consent
+           |                                v
+           |                  name + scheme + number + dependant -> finalize
+           v
+     human handoff <-> clinic Telegram operator -> idle
 ```
 
 The intent model only proposes the idle-state intent. Any OpenAI failure uses keyword mapping, and
@@ -56,16 +58,16 @@ are revalidated; model output never selects a service, timestamp, tenant, or sta
 
 `SlotEngine` builds candidates in the clinic timezone from `work_days`, `work_start`, `work_end`,
 and service duration. It subtracts both `CalendarProvider.free_busy` periods and overlapping open
-appointments. A selected `slot:<UTC ISO timestamp>` must have been offered and is rechecked before
-finalization.
+appointments. The patient first chooses one of three dates (or types another), then one of three
+times (or types another). The resulting UTC timestamp is rechecked before finalization.
 
 `finalize_booking` is a `SECURITY DEFINER` PostgreSQL function. Under one clinic-row lock it:
 
 1. Validates that the service belongs to the tenant and duration matches.
 2. Rejects overlaps against booked/confirmed appointments.
 3. Inserts the booked appointment with the service price snapshot and medical-aid values.
-4. Inserts configured reminder jobs, the `starts_at + 15 minutes` no-show job, and one idempotent
-   review request due two hours after the appointment ends.
+4. Inserts configured reminder jobs, the `starts_at + 15 minutes` attendance-check job, and one
+   idempotent review request due two hours after the appointment ends.
 5. Inserts patient confirmation and owner Telegram outbox rows.
 
 Only after that transaction commits does the flow create the calendar event. Failure inserts an
@@ -81,15 +83,15 @@ Telegram DLQ alert.
 `pop_due_jobs` atomically changes due jobs from `pending` to `processing`:
 
 - `reminder`: enqueue a configured WhatsApp template, or interactive Confirm/Reschedule/Cancel.
-- `no_show_check`: the `mark_no_show` RPC changes only `booked` appointments, increments the
-  patient's count atomically, and causes an owner alert.
-- `calendar_retry`: recreate the missing event and persist its provider ID.
+- `no_show_check`: sends a Telegram attendance check. Clinic staff explicitly use `/noshow`; the
+  system never infers physical attendance from a timer.
+- `calendar_retry`: create, update, or delete the provider event and persist its provider ID.
 - `review_request`: skip cancelled/no-show bookings or clinics without a review URL; otherwise
   enqueue the personalized Google Review link through the WhatsApp outbox.
 
-Confirm conditionally moves `booked -> confirmed`. Cancel conditionally moves open appointments to
-`cancelled` and alerts the owner. Reschedule cancels the old appointment and re-enters
-`await_slot` with the same service.
+Confirm conditionally moves `booked -> confirmed`. Cancellation requires a second explicit patient
+confirmation. Rescheduling atomically moves the existing appointment, preserves its consent and
+private data, rebuilds automation jobs, and updates its Google event.
 
 ## Tenant and security model
 
@@ -98,6 +100,8 @@ before domain work begins, and service/patient/appointment lookups validate owne
 are rows plus services, with no code branch or deployment.
 
 - Meta signatures use constant-time SHA-256 HMAC comparison over untouched request bytes.
+- Ross is the only dashboard user. Clinic staff use only their bound Telegram chat; handoff replies,
+  resume actions, booking reports, and no-show commands are tenant-scoped by `telegram_chat_id`.
 - Webhook message IDs and job dedupe keys enforce idempotency.
 - Supabase tables have RLS enabled and worker RPC execution is granted only to `service_role`.
 - `oauth_tokens` has one provider record per clinic. Refresh tokens are Fernet-encrypted at rest;
