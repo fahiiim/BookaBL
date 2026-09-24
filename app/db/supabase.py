@@ -19,6 +19,7 @@ from app.domain.models import (
     BookingSummary,
     Clinic,
     ConversationState,
+    ConversationStep,
     DomainModel,
     FinalizeBookingCommand,
     JobStatus,
@@ -177,6 +178,20 @@ class SupabaseDatabase:
             state.model_dump(mode="json"), on_conflict="clinic_id,patient_id"
         ).execute()
 
+    async def get_handoff_state(
+        self, clinic_id: UUID, reference: str
+    ) -> ConversationState | None:
+        result = (
+            await self._client.table("conversation_states")
+            .select("*")
+            .eq("clinic_id", str(clinic_id))
+            .eq("state", ConversationStep.HUMAN_HANDOFF.value)
+            .contains("slot", {"handoff_ref": reference.upper()})
+            .limit(1)
+            .execute()
+        )
+        return self._model_or_none(ConversationState, result.data)
+
     async def log_message(
         self,
         clinic_id: UUID,
@@ -237,7 +252,7 @@ class SupabaseDatabase:
             raise RuntimeError("finalize_booking RPC returned no appointment")
         return appointment
 
-    async def set_google_event_id(self, appointment_id: UUID, event_id: str) -> None:
+    async def set_google_event_id(self, appointment_id: UUID, event_id: str | None) -> None:
         await self._client.table("appointments").update({"google_event_id": event_id}).eq(
             "id", str(appointment_id)
         ).execute()
@@ -357,6 +372,29 @@ class SupabaseDatabase:
             .in_("status", [status.value for status in from_statuses])
             .execute()
         )
+        return self._model_or_none(Appointment, result.data)
+
+    async def reschedule_appointment(
+        self,
+        appointment_id: UUID,
+        patient_id: UUID,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> Appointment | None:
+        try:
+            result = await self._client.rpc(
+                "reschedule_appointment",
+                {
+                    "p_appointment_id": str(appointment_id),
+                    "p_patient_id": str(patient_id),
+                    "p_starts_at": starts_at.isoformat(),
+                    "p_ends_at": ends_at.isoformat(),
+                },
+            ).execute()
+        except APIError as exc:
+            if exc.code == "23P01" or "no longer available" in str(exc):
+                raise BookingConflictError("Booking slot is no longer available") from exc
+            raise
         return self._model_or_none(Appointment, result.data)
 
     async def mark_no_show(self, appointment_id: UUID) -> Appointment | None:
