@@ -2,12 +2,13 @@
 
 from datetime import date, datetime, timedelta
 from typing import Any
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.adapters.telegram import TelegramSender
 from app.core.clock import Clock
 from app.db.protocol import Database
-from app.domain.models import AppointmentStatus
+from app.domain.models import AppointmentStatus, ConversationStep
 from app.services.privacy import minimal_patient_name, short_date
 from app.services.slot_engine import local_date_bounds
 
@@ -38,8 +39,17 @@ class TelegramCommandService:
         clinic = await self._database.get_clinic_by_telegram_chat_id(chat_id)
         if clinic is None:
             return False
-        text = str(message.get("text", "")).casefold().strip()
-        command = text.split("@", maxsplit=1)[0]
+        raw_text = str(message.get("text", "")).strip()
+        command = raw_text.casefold().split("@", maxsplit=1)[0]
+        await self._database.log_message(
+            clinic.id, None, "telegram", "inbound", str(message.get("text", "")), payload
+        )
+        if command.startswith("/reply "):
+            return await self._reply_to_patient(clinic.id, chat_id, raw_text)
+        if command.startswith("/resume "):
+            return await self._resume_bot(clinic.id, chat_id, command)
+        if command.startswith("/noshow "):
+            return await self._mark_no_show(clinic.id, chat_id, command)
         period = self._command_period(command)
         if period is None:
             return False
@@ -79,6 +89,104 @@ class TelegramCommandService:
                 clinic.id, None, "telegram", "outbound", reply, {}
             )
         return True
+
+    async def _reply_to_patient(
+        self, clinic_id: UUID, chat_id: str, command: str
+    ) -> bool:
+        parts = command.split(maxsplit=2)
+        if len(parts) != 3 or not parts[2].strip():
+            await self._send(chat_id, clinic_id, "Use: /reply REFERENCE your message")
+            return True
+        state = await self._database.get_handoff_state(clinic_id, parts[1])
+        if state is None:
+            await self._send(chat_id, clinic_id, "That handoff is not active for this clinic.")
+            return True
+        patient = await self._database.get_patient(state.patient_id)
+        if patient is None:
+            await self._send(chat_id, clinic_id, "The patient could not be found.")
+            return True
+        reply = parts[2].strip()
+        await self._database.enqueue_outbox(
+            clinic_id,
+            "whatsapp",
+            patient.wa_number,
+            {"kind": "text", "text": reply},
+        )
+        await self._database.log_message(
+            clinic_id, patient.id, "telegram", "outbound", reply, {"handoff": parts[1]}
+        )
+        await self._send(chat_id, clinic_id, f"Reply sent for handoff {parts[1].upper()}.")
+        return True
+
+    async def _resume_bot(self, clinic_id: UUID, chat_id: str, command: str) -> bool:
+        parts = command.split(maxsplit=1)
+        if len(parts) != 2:
+            await self._send(chat_id, clinic_id, "Use: /resume REFERENCE")
+            return True
+        state = await self._database.get_handoff_state(clinic_id, parts[1])
+        if state is None:
+            await self._send(chat_id, clinic_id, "That handoff is not active for this clinic.")
+            return True
+        patient = await self._database.get_patient(state.patient_id)
+        if patient is None:
+            await self._send(chat_id, clinic_id, "The patient could not be found.")
+            return True
+        await self._database.save_conversation_state(
+            state.model_copy(
+                update={
+                    "state": ConversationStep.IDLE,
+                    "slot": {},
+                    "updated_at": self._clock.now(),
+                }
+            )
+        )
+        await self._database.enqueue_outbox(
+            clinic_id,
+            "whatsapp",
+            patient.wa_number,
+            {
+                "kind": "buttons",
+                "body": "The automated booking assistant is available again. How can I help?",
+                "buttons": [
+                    {"id": "start:book", "title": "Book appointment"},
+                    {"id": "start:human", "title": "Chat to receptionist"},
+                ],
+            },
+        )
+        await self._send(chat_id, clinic_id, f"Automation resumed for {parts[1].upper()}.")
+        return True
+
+    async def _mark_no_show(self, clinic_id: UUID, chat_id: str, command: str) -> bool:
+        parts = command.split(maxsplit=1)
+        try:
+            appointment_id = UUID(parts[1])
+        except (IndexError, ValueError):
+            await self._send(chat_id, clinic_id, "Use: /noshow APPOINTMENT_ID")
+            return True
+        summary = await self._database.get_booking_summary(appointment_id)
+        if summary is None or summary.appointment.clinic_id != clinic_id:
+            await self._send(chat_id, clinic_id, "That appointment is not part of this clinic.")
+            return True
+        updated = await self._database.mark_no_show(appointment_id)
+        if updated is None:
+            await self._send(
+                chat_id,
+                clinic_id,
+                "That appointment can no longer be marked no-show.",
+            )
+            return True
+        await self._send(
+            chat_id,
+            clinic_id,
+            f"No-show recorded for {minimal_patient_name(summary.patient.name)}.",
+        )
+        return True
+
+    async def _send(self, chat_id: str, clinic_id: UUID, text: str) -> None:
+        await self._telegram.send_message(chat_id, text)
+        await self._database.log_message(
+            clinic_id, None, "telegram", "outbound", text, {}
+        )
 
     @staticmethod
     def _command_period(command: str) -> int | None:
