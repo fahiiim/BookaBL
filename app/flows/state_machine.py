@@ -97,7 +97,22 @@ class ConversationTransitions:
             }
         ),
         ConversationStep.AWAIT_CASH_NAME: frozenset(
-            {ConversationStep.AWAIT_DATE, ConversationStep.IDLE, ConversationStep.HUMAN_HANDOFF}
+            {
+                ConversationStep.AWAIT_CASH_NAME,
+                ConversationStep.AWAIT_CASH_NAME_CONFIRMATION,
+                ConversationStep.AWAIT_DATE,
+                ConversationStep.IDLE,
+                ConversationStep.HUMAN_HANDOFF,
+            }
+        ),
+        ConversationStep.AWAIT_CASH_NAME_CONFIRMATION: frozenset(
+            {
+                ConversationStep.AWAIT_CASH_NAME,
+                ConversationStep.AWAIT_CASH_NAME_CONFIRMATION,
+                ConversationStep.AWAIT_DATE,
+                ConversationStep.IDLE,
+                ConversationStep.HUMAN_HANDOFF,
+            }
         ),
         ConversationStep.AWAIT_CANCEL_CONFIRMATION: frozenset(
             {
