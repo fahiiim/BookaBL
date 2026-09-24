@@ -128,7 +128,7 @@ insert into public.clinics (
 ) values (
   'Example Dental', 'dental', 'starter', 'trial', now(), 7,
   999.00, '<META_PHONE_NUMBER_ID>', '<OWNER_CHAT_ID>', null,
-  'Africa/Johannesburg', '08:00', '17:00', '{1,2,3,4,5}', '{24,3}',
+  'Africa/Johannesburg', '08:00', '17:00', '{1,2,3,4,5}', '{24,2}',
   '{"reminder":{"name":"appointment_reminder","language":"en"}}',
   'Warm, concise, and professional.'
 ) returning id;
@@ -142,6 +142,14 @@ Use the real Meta `phone_number_id`, not the display phone number. The configure
 `WA_ACCESS_TOKEN` must have access to every enrolled phone-number ID. `telegram_chat_id` is the
 owner’s numeric chat ID. The owner must start the bot before Telegram can deliver messages.
 `WA_GRAPH_API_VERSION` controls the versioned Meta endpoint and defaults to `v23.0`.
+
+Set `TELEGRAM_WEBHOOK_SECRET` to a random value and pass the same value as `secret_token` when
+registering the Telegram webhook. BookaBL validates Telegram's
+`X-Telegram-Bot-Api-Secret-Token` header before accepting clinic commands.
+
+The dashboard is for the BookaBL administrator only. Clinic staff operate through their bound
+Telegram chat. Handoffs use `/reply REFERENCE message` and `/resume REFERENCE`; attendance checks
+use `/noshow APPOINTMENT_ID`. Every command is resolved through the clinic's `telegram_chat_id`.
 
 `work_days` use ISO weekday numbers. Reminder template configuration is optional; without it,
 the scheduler sends an interactive session message. Google Calendar is optional; when the three
@@ -240,8 +248,8 @@ reconnect. Production startup rejects a configured Google OAuth integration with
 - WhatsApp permits three reply buttons, so M1 offers the first three services ordered by name.
 - A patient's name comes from the WhatsApp contact profile; absent names become `Patient`.
 - Self-pay bookings store all medical-aid columns as `NULL`.
-- Reschedule cancels the prior booking before offering replacement slots; the owner receives the
-  new-booking alert after the replacement is finalized.
+- Reschedule keeps the original booking active while a replacement date and time are selected,
+  then atomically moves it without recollecting consent, payment, or medical-aid information.
 - The global `WA_ACCESS_TOKEN` is a Meta system-user token authorized for all enrolled clinic
   numbers. `wa_token_enc` is retained in the required schema for a future provisioning service
   and is not interpreted as plaintext by M1.
@@ -252,7 +260,8 @@ reconnect. Production startup rejects a configured Google OAuth integration with
 - Calendar creation is best-effort after the database transaction. A failed creation never
   rolls back a booking and is retried by the scheduler.
 - Reminder jobs whose due time is already past are eligible immediately, provided the appointment
-  has not started. Confirmed appointments are not marked no-show by the M1 rule.
+  has not started. A post-start attendance job asks the clinic on Telegram; only staff can mark a
+  booked or confirmed appointment as a no-show.
 - `OPENAI_INTENT_MODEL` defaults to `gpt-4o-mini`. Any OpenAI classification error falls back to
   the keyword classifier; the state machine remains authoritative.
 
