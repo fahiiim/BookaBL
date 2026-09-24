@@ -28,7 +28,8 @@ def normalize_whatsapp_event(payload: dict[str, Any]) -> IncomingMessage:
         kind = MessageKind.TEXT
     elif message_type == "interactive":
         interactive = _mapping(message.get("interactive"), "interactive")
-        reply = _mapping(interactive.get("button_reply"), "interactive.button_reply")
+        reply_value = interactive.get("button_reply") or interactive.get("list_reply")
+        reply = _mapping(reply_value, "interactive.reply")
         text = str(reply.get("id", "")).strip()
         display_text = str(reply.get("title", text)).strip()
         kind = MessageKind.BUTTON
@@ -66,4 +67,3 @@ def _mapping(value: object, path: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"Expected object at {path}")
     return cast(dict[str, Any], value)
-
