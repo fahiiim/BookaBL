@@ -29,7 +29,7 @@ SERVICE_ID = UUID("00000000-0000-4000-8000-000000000101")
 
 
 @pytest.mark.asyncio
-async def test_calendar_outage_does_not_rollback_booking_and_no_show_job_tags() -> None:
+async def test_calendar_outage_does_not_rollback_booking_and_attendance_is_manual() -> None:
     clock = FrozenClock(NOW)
     database = InMemoryDatabase(clock)
     clinic = Clinic(
@@ -92,8 +92,8 @@ async def test_calendar_outage_does_not_rollback_booking_and_no_show_job_tags() 
             from_number=patient.wa_number,
             profile_name=patient.name,
             kind=MessageKind.TEXT,
-            text="John Smith\n1234567\n01",
-            display_text="John Smith\n1234567\n01",
+            text="John Smith\nDiscovery\n1234567\n01",
+            display_text="John Smith\nDiscovery\n1234567\n01",
             raw={"id": "wamid.1"},
         ),
     )
@@ -110,9 +110,10 @@ async def test_calendar_outage_does_not_rollback_booking_and_no_show_job_tags() 
     scheduler = Scheduler(database, calendar, notifications, clock)
     await scheduler.run_once()
 
-    assert database.appointments[appointment.id].status is AppointmentStatus.NO_SHOW
-    assert database.patients[patient.id].no_show_count == 1
+    assert database.appointments[appointment.id].status is AppointmentStatus.BOOKED
+    assert database.patients[patient.id].no_show_count == 0
     assert any(
-        item.channel == "telegram" and str(item.payload.get("text", "")).startswith("No-show")
+        item.channel == "telegram"
+        and str(item.payload.get("text", "")).startswith("ATTENDANCE CHECK")
         for item in database.outbox.values()
     )
