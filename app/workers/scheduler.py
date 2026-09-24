@@ -12,6 +12,7 @@ from app.core.clock import Clock
 from app.db.protocol import Database
 from app.domain.models import AppointmentStatus, AutomationJob
 from app.services.notifications import NotificationFormatter
+from app.services.privacy import minimal_patient_name, short_date
 
 logger = logging.getLogger(__name__)
 JOB_BACKOFF_SECONDS = (30, 120, 600, 3600)
@@ -117,25 +118,30 @@ class Scheduler:
         )
 
     async def _tag_no_show(self, job: AutomationJob) -> None:
+        """Ask clinic staff to verify attendance; never infer physical presence."""
+
         if job.appointment_id is None:
             raise ValueError("No-show job has no appointment")
-        updated = await self._database.mark_no_show(job.appointment_id)
-        if updated is None:
+        summary = await self._database.get_booking_summary(job.appointment_id)
+        if summary is None or summary.appointment.status not in {
+            AppointmentStatus.BOOKED,
+            AppointmentStatus.CONFIRMED,
+        }:
             return
-        summary = await self._database.get_booking_summary(updated.id)
         clinic = await self._database.get_clinic(job.clinic_id)
-        if summary and clinic and clinic.telegram_chat_id:
+        if clinic and clinic.telegram_chat_id:
+            local = summary.appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
             await self._database.enqueue_outbox(
                 clinic.id,
                 "telegram",
                 clinic.telegram_chat_id,
                 {
-                    "text": self._notifications.owner_status_change(
-                        "No-show",
-                        clinic,
-                        summary.patient,
-                        summary.service,
-                        summary.appointment,
+                    "text": (
+                        "ATTENDANCE CHECK\n"
+                        f"{short_date(local)} {local:%H:%M} - "
+                        f"{minimal_patient_name(summary.patient.name)}\n"
+                        "If the patient did not arrive, reply:\n"
+                        f"/noshow {summary.appointment.id}"
                     )
                 },
             )
@@ -145,15 +151,21 @@ class Scheduler:
             raise ValueError("Calendar retry job has no appointment")
         summary = await self._database.get_booking_summary(job.appointment_id)
         clinic = await self._database.get_clinic(job.clinic_id)
-        if summary is None or clinic is None or summary.appointment.google_event_id:
+        if summary is None or clinic is None:
             return
-        if summary.appointment.status is AppointmentStatus.CANCELLED:
+        action = str(job.payload.get("action", ""))
+        if summary.appointment.status is AppointmentStatus.CANCELLED or action == "delete":
+            await self._calendar.delete_event(clinic, summary.appointment)
+            await self._database.set_google_event_id(summary.appointment.id, None)
             return
-        event_id = await self._calendar.create_event(
-            clinic,
-            summary.patient,
-            summary.appointment,
-        )
+        if summary.appointment.google_event_id or action == "update":
+            event_id = await self._calendar.update_event(
+                clinic, summary.patient, summary.appointment
+            )
+        else:
+            event_id = await self._calendar.create_event(
+                clinic, summary.patient, summary.appointment
+            )
         if event_id is not None:
             await self._database.set_google_event_id(summary.appointment.id, event_id)
 
