@@ -237,7 +237,7 @@ async def test_calendar_refreshes_per_clinic_token_and_isolates_tenants() -> Non
         assert "Status: Confirmed via WhatsApp" in description
         assert "Patient: Thandi N" in description
         assert "Time: 10:00 am" in description
-        assert f"/admin/appointments/{APPOINTMENT_ID}?clinic_id={CLINIC_A}" in description
+        assert "For more info: https://bookabl.co.za" in description
         assert "Nkosi" not in description
         assert "Cleaning" not in description
         assert "27820000000" not in description
