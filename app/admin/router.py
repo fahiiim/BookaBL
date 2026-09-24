@@ -336,6 +336,18 @@ async def appointment_status(
             [AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED],
             AppointmentStatus.CANCELLED,
         )
+        if updated and updated.google_event_id:
+            clock = get_api_context(request).clock
+            now = clock.now() if clock is not None else datetime.now(UTC)
+            await database.enqueue_job(
+                clinic.id,
+                "calendar_retry",
+                now,
+                f"calendar-admin-cancel:{updated.id}:{int(now.timestamp())}",
+                appointment_id=updated.id,
+                patient_id=updated.patient_id,
+                payload={"action": "delete"},
+            )
     elif new_status == AppointmentStatus.NO_SHOW.value:
         updated = await database.mark_no_show(appointment_id)
     else:
