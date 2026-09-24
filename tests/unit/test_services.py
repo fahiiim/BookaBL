@@ -85,7 +85,7 @@ def test_trial_gate_blocks_only_after_configured_duration() -> None:
 def test_state_machine_enforces_popia_consent_gate() -> None:
     assert (
         ConversationTransitions.validate(
-            ConversationStep.AWAIT_SLOT, ConversationStep.AWAIT_PAYMENT_TYPE
+            ConversationStep.AWAIT_TIME, ConversationStep.AWAIT_PAYMENT_TYPE
         )
         is ConversationStep.AWAIT_PAYMENT_TYPE
     )
