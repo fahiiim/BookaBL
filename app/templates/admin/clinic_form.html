@@ -72,7 +72,7 @@
     </div>
     <fieldset><legend>Working days</legend><div class="check-row">{% for number, day in [(1,'Mon'),(2,'Tue'),(3,'Wed'),(4,'Thu'),(5,'Fri'),(6,'Sat'),(7,'Sun')] %}<label class="check-chip"><input type="checkbox" name="work_days" value="{{ number }}" {% if editing and number in editing.work_days or not editing and number <= 5 %}checked{% endif %}><span>{{ day }}</span></label>{% endfor %}</div></fieldset>
     <div class="form-grid">
-      <label>Reminder offsets in hours<input name="reminder_offsets_h" value="{{ editing.reminder_offsets_h|join(', ') if editing else '24, 3' }}" placeholder="24, 3"></label>
+      <label>Reminder offsets in hours<input name="reminder_offsets_h" value="{{ editing.reminder_offsets_h|join(', ') if editing else '24, 2' }}" placeholder="24, 2"></label>
       <label>Brand voice<textarea name="brand_voice" rows="3" placeholder="Warm, concise, and professional.">{{ editing.brand_voice or '' if editing else '' }}</textarea></label>
     </div>
   </section>
