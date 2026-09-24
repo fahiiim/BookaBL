@@ -103,6 +103,13 @@ def test_state_machine_enforces_popia_consent_gate() -> None:
         )
         is ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG
     )
+    assert (
+        ConversationTransitions.validate(
+            ConversationStep.AWAIT_CASH_NAME,
+            ConversationStep.AWAIT_CASH_NAME_CONFIRMATION,
+        )
+        is ConversationStep.AWAIT_CASH_NAME_CONFIRMATION
+    )
     with pytest.raises(InvalidTransitionError):
         ConversationTransitions.validate(
             ConversationStep.AWAIT_PAYMENT_TYPE,
