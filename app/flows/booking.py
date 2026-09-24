@@ -125,6 +125,10 @@ class BookingFlow:
                 await self._handle_medical_aid_details(clinic, patient, state, message.text)
             case ConversationStep.AWAIT_CASH_NAME:
                 await self._handle_cash_name(clinic, patient, state, message.text)
+            case ConversationStep.AWAIT_CASH_NAME_CONFIRMATION:
+                await self._handle_cash_name_confirmation(
+                    clinic, patient, state, message.text
+                )
             case ConversationStep.AWAIT_CANCEL_CONFIRMATION:
                 await self._handle_cancel_confirmation(
                     clinic, patient, state, message.text
@@ -151,6 +155,7 @@ class BookingFlow:
                 ReplyButton("start:book", "Book appointment"),
                 ReplyButton("start:human", "Chat to receptionist"),
             ],
+            style=True,
         )
 
     async def _handle_entry_choice(
@@ -449,9 +454,68 @@ class BookingFlow:
     async def _handle_cash_name(
         self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
     ) -> None:
-        patient_full_name = text.strip()
-        if not patient_full_name:
-            await self._reply_text(clinic, patient, self._cash_consent(clinic), style=False)
+        patient_full_name = self._parse_patient_name(text)
+        if patient_full_name is None:
+            await self._reply_text(
+                clinic,
+                patient,
+                "Please send the patient's name and surname using letters only, "
+                "for example Thandi Nkosi.",
+            )
+            return
+        context = dict(state.slot)
+        context["patient_full_name"] = patient_full_name
+        await self._save_state(
+            state, ConversationStep.AWAIT_CASH_NAME_CONFIRMATION, context
+        )
+        await self._reply_buttons(
+            clinic,
+            patient,
+            f"Please confirm the booking name: {patient_full_name}",
+            [
+                ReplyButton("name:confirm", "Confirm name"),
+                ReplyButton("name:edit", "Edit name"),
+            ],
+        )
+
+    async def _handle_cash_name_confirmation(
+        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
+    ) -> None:
+        choice = text.casefold().strip()
+        if choice in {"name:edit", "edit", "edit name", "no"}:
+            context = dict(state.slot)
+            context.pop("patient_full_name", None)
+            await self._save_state(state, ConversationStep.AWAIT_CASH_NAME, context)
+            await self._reply_text(
+                clinic,
+                patient,
+                "Please send the correct name and surname, for example Thandi Nkosi.",
+            )
+            return
+        if choice not in {"name:confirm", "confirm", "confirm name", "yes"}:
+            pending_name = str(state.slot.get("patient_full_name", ""))
+            await self._reply_buttons(
+                clinic,
+                patient,
+                f"Please confirm the booking name: {pending_name}",
+                [
+                    ReplyButton("name:confirm", "Confirm name"),
+                    ReplyButton("name:edit", "Edit name"),
+                ],
+            )
+            return
+        patient_full_name = self._parse_patient_name(
+            str(state.slot.get("patient_full_name", ""))
+        )
+        if patient_full_name is None:
+            context = dict(state.slot)
+            context.pop("patient_full_name", None)
+            await self._save_state(state, ConversationStep.AWAIT_CASH_NAME, context)
+            await self._reply_text(
+                clinic,
+                patient,
+                "Please send the correct name and surname, for example Thandi Nkosi.",
+            )
             return
         await self._database.save_patient_consent(
             clinic.id,
@@ -878,7 +942,7 @@ class BookingFlow:
         patient: Patient,
         text: str,
         *,
-        style: bool = True,
+        style: bool = False,
     ) -> None:
         if style:
             text = await self._intent.style(text, clinic.brand_voice)
@@ -893,8 +957,11 @@ class BookingFlow:
         patient: Patient,
         body: str,
         buttons: list[ReplyButton],
+        *,
+        style: bool = False,
     ) -> None:
-        body = await self._intent.style(body, clinic.brand_voice)
+        if style:
+            body = await self._intent.style(body, clinic.brand_voice)
         await self._whatsapp.send_buttons(clinic, patient.wa_number, body, buttons)
         await self._database.log_message(
             clinic.id,
@@ -912,8 +979,11 @@ class BookingFlow:
         body: str,
         button_text: str,
         rows: list[ListRow],
+        *,
+        style: bool = False,
     ) -> None:
-        body = await self._intent.style(body, clinic.brand_voice)
+        if style:
+            body = await self._intent.style(body, clinic.brand_voice)
         await self._whatsapp.send_list(
             clinic, patient.wa_number, body, button_text, rows
         )
@@ -992,22 +1062,41 @@ class BookingFlow:
     def _parse_local_date(self, value: str, clinic: Clinic) -> date | None:
         normalized = value.casefold().strip()
         local_today = self._clock.now().astimezone(ZoneInfo(clinic.timezone)).date()
-        if normalized == "today":
+        relative_day = re.search(r"\b(today|tomorrow)\b", normalized)
+        if relative_day and relative_day.group(1) == "today":
             parsed = local_today
-        elif normalized == "tomorrow":
+        elif relative_day and relative_day.group(1) == "tomorrow":
             parsed = local_today + timedelta(days=1)
         else:
             parsed = None
+            numeric_date = re.search(
+                r"(?<!\d)(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
+                r"\d{4}-\d{1,2}-\d{1,2})(?!\d)",
+                normalized,
+            )
+            date_text = numeric_date.group(0) if numeric_date else normalized
             for pattern in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y"):
                 try:
-                    parsed = datetime.strptime(normalized, pattern).date()
+                    parsed = datetime.strptime(date_text, pattern).date()
                     break
                 except ValueError:
                     continue
             if parsed is None:
+                month_name = (
+                    "january|february|march|april|may|june|july|august|"
+                    "september|october|november|december|jan|feb|mar|apr|jun|"
+                    "jul|aug|sep|sept|oct|nov|dec"
+                )
+                named_date = re.search(
+                    rf"\b(?:\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{month_name})|"
+                    rf"(?:{month_name})\s+\d{{1,2}}(?:st|nd|rd|th)?)\b",
+                    normalized,
+                )
+                named_text = named_date.group(0) if named_date else normalized
+                named_text = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", named_text)
                 for pattern in ("%d %B", "%d %b", "%B %d", "%b %d"):
                     try:
-                        parsed = datetime.strptime(normalized, pattern).date().replace(
+                        parsed = datetime.strptime(named_text, pattern).date().replace(
                             year=local_today.year
                         )
                         if parsed < local_today:
@@ -1029,15 +1118,40 @@ class BookingFlow:
                     )
                 )
             }
-            weekday_text = normalized.removeprefix("next ")
-            if parsed is None and weekday_text in weekday_names:
+            weekday_match = re.search(
+                r"\b(next\s+)?(monday|tuesday|wednesday|thursday|friday|"
+                r"saturday|sunday)\b",
+                normalized,
+            )
+            if parsed is None and weekday_match:
+                weekday_text = weekday_match.group(2)
                 delta = (weekday_names[weekday_text] - local_today.weekday()) % 7
-                if normalized.startswith("next ") and delta == 0:
+                if weekday_match.group(1) and delta == 0:
                     delta = 7
                 parsed = local_today + timedelta(days=delta)
         if parsed is None or parsed < local_today or parsed > local_today + timedelta(days=30):
             return None
         return parsed
+
+    @staticmethod
+    def _parse_patient_name(value: str) -> str | None:
+        normalized = " ".join(value.strip().split())
+        if not 3 <= len(normalized) <= 100:
+            return None
+        lowered = normalized.casefold()
+        if "@" in normalized or "http://" in lowered or "https://" in lowered:
+            return None
+        parts = normalized.split()
+        if len(parts) < 2:
+            return None
+        allowed_punctuation = {"'", "-", "."}
+        if any(
+            not all(character.isalpha() or character in allowed_punctuation for character in part)
+            or not any(character.isalpha() for character in part)
+            for part in parts
+        ):
+            return None
+        return normalized
 
     @staticmethod
     def _parse_local_time(value: str) -> time | None:
