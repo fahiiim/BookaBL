@@ -34,6 +34,14 @@ class CalendarProvider(Protocol):
     ) -> str | None:
         """Create a calendar event, or return ``None`` when the clinic is disconnected."""
 
+    async def update_event(
+        self, clinic: Clinic, patient: Patient, appointment: Appointment
+    ) -> str | None:
+        """Update an existing event, creating it when no event identifier exists."""
+
+    async def delete_event(self, clinic: Clinic, appointment: Appointment) -> None:
+        """Delete an appointment's calendar event when one exists."""
+
 
 class GoogleCalendar:
     """Google Calendar adapter resolving encrypted OAuth credentials per clinic."""
@@ -93,33 +101,7 @@ class GoogleCalendar:
         appointment: Appointment,
     ) -> str | None:
         calendar_id = quote(clinic.google_calendar_id or "primary", safe="")
-        patient_name = minimal_patient_name(patient.name)
-        starts_at = appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
-        created_at = appointment.created_at.astimezone(ZoneInfo(clinic.timezone))
-        time_label = starts_at.strftime("%I:%M %p").lower()
-        appointment_url = (
-            f"{self._api_base_url}/admin/appointments/{appointment.id}"
-            f"?clinic_id={clinic.id}"
-        )
-        payload = {
-            "summary": f"{patient_name} - Confirmed",
-            "description": (
-                "Status: Confirmed via WhatsApp\n"
-                f"Booked: {created_at:%H:%M} {short_date(created_at)}\n"
-                f"Patient: {patient_name}\n"
-                f"Time: {time_label}\n"
-                f"Link: {appointment_url}\n\n"
-                "Full details are available in the secure BookaBL dashboard."
-            ),
-            "start": {
-                "dateTime": appointment.starts_at.isoformat(),
-                "timeZone": clinic.timezone,
-            },
-            "end": {
-                "dateTime": appointment.ends_at.isoformat(),
-                "timeZone": clinic.timezone,
-            },
-        }
+        payload = self._event_payload(clinic, patient, appointment)
         headers = await self._headers(clinic)
         if headers is None:
             return None
@@ -133,6 +115,75 @@ class GoogleCalendar:
             return str(response.json()["id"])
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise CalendarProviderError("google_calendar", f"event creation failed: {exc}") from exc
+
+    async def update_event(
+        self, clinic: Clinic, patient: Patient, appointment: Appointment
+    ) -> str | None:
+        if not appointment.google_event_id:
+            return await self.create_event(clinic, patient, appointment)
+        headers = await self._headers(clinic)
+        if headers is None:
+            return None
+        calendar_id = quote(clinic.google_calendar_id or "primary", safe="")
+        event_id = quote(appointment.google_event_id, safe="")
+        try:
+            response = await self._client.patch(
+                f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}",
+                headers=headers,
+                json=self._event_payload(clinic, patient, appointment),
+            )
+            if response.status_code == 404:
+                return await self.create_event(clinic, patient, appointment)
+            response.raise_for_status()
+            return str(response.json().get("id", appointment.google_event_id))
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            raise CalendarProviderError("google_calendar", f"event update failed: {exc}") from exc
+
+    async def delete_event(self, clinic: Clinic, appointment: Appointment) -> None:
+        if not appointment.google_event_id:
+            return
+        headers = await self._headers(clinic)
+        if headers is None:
+            return
+        calendar_id = quote(clinic.google_calendar_id or "primary", safe="")
+        event_id = quote(appointment.google_event_id, safe="")
+        try:
+            response = await self._client.delete(
+                f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}",
+                headers=headers,
+            )
+            if response.status_code == 404:
+                return
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise CalendarProviderError("google_calendar", f"event delete failed: {exc}") from exc
+
+    def _event_payload(
+        self, clinic: Clinic, patient: Patient, appointment: Appointment
+    ) -> dict[str, Any]:
+        patient_name = minimal_patient_name(patient.name)
+        starts_at = appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
+        created_at = appointment.created_at.astimezone(ZoneInfo(clinic.timezone))
+        time_label = starts_at.strftime("%I:%M %p").lower()
+        return {
+            "summary": f"{patient_name} - Confirmed",
+            "description": (
+                "Status: Confirmed via WhatsApp\n"
+                f"Booked: {created_at:%H:%M} {short_date(created_at)}\n"
+                f"Patient: {patient_name}\n"
+                f"Time: {time_label}\n"
+                f"For more info: {self._api_base_url}\n\n"
+                "Patient details remain in BookaBL's secure admin portal."
+            ),
+            "start": {
+                "dateTime": appointment.starts_at.isoformat(),
+                "timeZone": clinic.timezone,
+            },
+            "end": {
+                "dateTime": appointment.ends_at.isoformat(),
+                "timeZone": clinic.timezone,
+            },
+        }
 
     async def _headers(self, clinic: Clinic) -> dict[str, str] | None:
         token = await self._access_token(clinic)
@@ -207,6 +258,16 @@ class StubCalendar:
         )
         return f"stub-{hashlib.sha256(material.encode()).hexdigest()[:24]}"
 
+    async def update_event(
+        self, clinic: Clinic, patient: Patient, appointment: Appointment
+    ) -> str:
+        return appointment.google_event_id or await self.create_event(
+            clinic, patient, appointment
+        )
+
+    async def delete_event(self, clinic: Clinic, appointment: Appointment) -> None:
+        del clinic, appointment
+
 
 class FakeCalendar(StubCalendar):
     """Configurable calendar double with captured event creation calls."""
@@ -216,6 +277,8 @@ class FakeCalendar(StubCalendar):
         self.created: list[dict[str, Any]] = []
         self.fail_free_busy = False
         self.fail_create = False
+        self.updated: list[UUID] = []
+        self.deleted: list[UUID] = []
 
     async def free_busy(
         self, clinic: Clinic, starts_at: datetime, ends_at: datetime
@@ -249,3 +312,17 @@ class FakeCalendar(StubCalendar):
             }
         )
         return event_id
+
+    async def update_event(
+        self, clinic: Clinic, patient: Patient, appointment: Appointment
+    ) -> str:
+        if self.fail_create:
+            raise ExternalServiceError("fake_calendar", "update unavailable")
+        self.updated.append(appointment.id)
+        return await super().update_event(clinic, patient, appointment)
+
+    async def delete_event(self, clinic: Clinic, appointment: Appointment) -> None:
+        if self.fail_create:
+            raise ExternalServiceError("fake_calendar", "delete unavailable")
+        self.deleted.append(appointment.id)
+        await super().delete_event(clinic, appointment)
