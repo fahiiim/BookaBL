@@ -2,6 +2,7 @@ from typing import cast
 
 import httpx
 import pytest
+from app.adapters.intent import FakeIntent
 from app.adapters.telegram import FakeTelegram
 from app.adapters.whatsapp import FakeWhatsApp, ListRow, ReplyButton
 from app.bootstrap import Runtime
@@ -14,6 +15,14 @@ from tests.integration.test_booking_flow import (
     build_test_runtime,
     send_whatsapp,
 )
+
+
+class DistortingIntent(FakeIntent):
+    """Expose any unsafe use of AI rewriting in deterministic prompts."""
+
+    async def style(self, text: str, brand_voice: str | None) -> str:
+        del brand_voice
+        return f"DISTORTED: {text}"
 
 
 @pytest.mark.asyncio
@@ -75,6 +84,76 @@ async def test_reception_handoff_relays_telegram_replies_and_can_resume() -> Non
         assert runtime.database.states[(CLINIC_ID, patient_id)].state is ConversationStep.IDLE
 
 
+@pytest.mark.asyncio
+async def test_brand_voice_only_styles_the_safe_welcome_message() -> None:
+    runtime, clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    runtime.database.add_clinic(
+        clinic.model_copy(update={"brand_voice": "Warm and conversational"})
+    )
+    runtime.booking_flow._intent = DistortingIntent()
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await send_whatsapp(client, runtime, 1, "Hello")
+        assert str(runtime.whatsapp.sent[-1]["body"]).startswith("DISTORTED:")
+
+        await send_whatsapp(client, runtime, 2, "start:book", button=True)
+        assert runtime.whatsapp.sent[-1]["body"] == "Which service would you like?"
+
+        service = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])[0]
+        await send_whatsapp(client, runtime, 3, service.id, button=True)
+        assert runtime.whatsapp.sent[-1]["body"] == (
+            "Which date would suit you? Here are the nearest available dates."
+        )
+
+        selected_date = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])[0]
+        await send_whatsapp(client, runtime, 4, selected_date.id, button=True)
+        selected_time = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])[0]
+        await send_whatsapp(client, runtime, 5, selected_time.id, button=True)
+        assert runtime.whatsapp.sent[-1]["body"] == (
+            "How will you pay for your appointment?"
+        )
+
+
+@pytest.mark.asyncio
+async def test_custom_date_is_extracted_from_a_natural_sentence() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await send_whatsapp(client, runtime, 1, "Hello")
+        await send_whatsapp(client, runtime, 2, "start:book", button=True)
+        service = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])[0]
+        await send_whatsapp(client, runtime, 3, service.id, button=True)
+        other_date = next(
+            row
+            for row in cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+            if row.id == "date:other"
+        )
+        await send_whatsapp(client, runtime, 4, other_date.id, button=True)
+        await send_whatsapp(
+            client,
+            runtime,
+            5,
+            "Okay, I want to book an appointment on 25/08/2026 please",
+        )
+
+    patient_id = next(iter(runtime.database.patients))
+    state = runtime.database.states[(CLINIC_ID, patient_id)]
+    assert state.state is ConversationStep.AWAIT_TIME
+    assert state.slot["selected_date"] == "2026-08-25"
+    assert runtime.whatsapp.sent[-1]["kind"] == "list"
+    assert "Tue 25 Aug" in str(runtime.whatsapp.sent[-1]["body"])
+
+
 async def _book_cash(
     client: httpx.AsyncClient, runtime: Runtime
 ) -> None:
@@ -90,6 +169,7 @@ async def _book_cash(
     await send_whatsapp(client, runtime, 5, selected_time.id, button=True)
     await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
     await send_whatsapp(client, runtime, 7, "Thandi Nkosi")
+    await send_whatsapp(client, runtime, 8, "name:confirm", button=True)
 
 
 @pytest.mark.asyncio
@@ -107,11 +187,11 @@ async def test_reschedule_preserves_booking_and_cancel_requires_confirmation() -
         original_start = appointment.starts_at
         original_event = appointment.google_event_id
 
-        await send_whatsapp(client, runtime, 8, f"reschedule:{appointment.id}", button=True)
+        await send_whatsapp(client, runtime, 9, f"reschedule:{appointment.id}", button=True)
         selected_date = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])[0]
-        await send_whatsapp(client, runtime, 9, selected_date.id, button=True)
+        await send_whatsapp(client, runtime, 10, selected_date.id, button=True)
         selected_time = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])[0]
-        await send_whatsapp(client, runtime, 10, selected_time.id, button=True)
+        await send_whatsapp(client, runtime, 11, selected_time.id, button=True)
 
         moved = runtime.database.appointments[appointment.id]
         assert len(runtime.database.appointments) == 1
@@ -122,11 +202,11 @@ async def test_reschedule_preserves_booking_and_cancel_requires_confirmation() -
             [job for job in runtime.database.jobs.values() if job.appointment_id == moved.id]
         ) == 4
 
-        await send_whatsapp(client, runtime, 11, f"cancel:{appointment.id}", button=True)
+        await send_whatsapp(client, runtime, 12, f"cancel:{appointment.id}", button=True)
         assert runtime.database.appointments[appointment.id].status is AppointmentStatus.BOOKED
         cancel_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
         confirm = next(button for button in cancel_buttons if button.title == "Yes, cancel")
-        await send_whatsapp(client, runtime, 12, confirm.id, button=True)
+        await send_whatsapp(client, runtime, 13, confirm.id, button=True)
 
     cancelled = runtime.database.appointments[appointment.id]
     assert cancelled.status is AppointmentStatus.CANCELLED
