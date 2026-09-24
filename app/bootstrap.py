@@ -76,6 +76,8 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
         telegram = FakeTelegram()
     else:
         raise ConfigurationError("TELEGRAM_BOT_TOKEN is required in production")
+    if settings.app_env == "prod" and not settings.telegram_webhook_secret:
+        raise ConfigurationError("TELEGRAM_WEBHOOK_SECRET is required in production")
 
     google_oauth_configured = bool(
         settings.google_oauth_client_id and settings.google_oauth_client_secret
