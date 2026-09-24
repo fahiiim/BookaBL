@@ -30,11 +30,22 @@ class IntentResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class StyledReply(BaseModel):
+    """A tone-adjusted reply whose operational meaning must remain unchanged."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    text: str = Field(min_length=1, max_length=900)
+
+
 class IntentModel(Protocol):
     """Classify a patient utterance without controlling flow transitions."""
 
     async def classify(self, text: str) -> IntentResult:
         """Return one supported intent with a bounded confidence score."""
+
+    async def style(self, text: str, brand_voice: str | None) -> str:
+        """Apply tenant tone without changing facts or conversation controls."""
 
 
 class KeywordIntent:
@@ -53,6 +64,10 @@ class KeywordIntent:
         if any(word in normalized for word in ("hello", "hi", "hey", "good morning")):
             return IntentResult(intent=IntentKind.GREETING, confidence=0.8)
         return IntentResult(intent=IntentKind.OTHER, confidence=0.5)
+
+    async def style(self, text: str, brand_voice: str | None) -> str:
+        del brand_voice
+        return text
 
 
 class OpenAIIntent:
@@ -94,6 +109,33 @@ class OpenAIIntent:
             logger.warning("intent_model_fallback", exc_info=exc)
             return await self._fallback.classify(text)
 
+    async def style(self, text: str, brand_voice: str | None) -> str:
+        if not brand_voice or not brand_voice.strip():
+            return text
+        try:
+            response = await self._client.responses.parse(
+                model=self._model,
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Rewrite the supplied clinic message in the requested brand voice. "
+                            "Preserve every fact, clinic name, date, time, URL, instruction, and "
+                            "choice exactly. Do not add medical advice, promises, or new facts. "
+                            "Keep it concise and return only the rewritten message.\n\n"
+                            f"Brand voice instructions: {brand_voice}"
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                text_format=StyledReply,
+            )
+            parsed = response.output_parsed
+            return parsed.text if parsed is not None else text
+        except Exception as exc:
+            logger.warning("reply_style_fallback", exc_info=exc)
+            return text
+
 
 class FakeIntent:
     """Configurable intent model used by flow tests."""
@@ -106,3 +148,6 @@ class FakeIntent:
         self.inputs.append(text)
         return self.result
 
+    async def style(self, text: str, brand_voice: str | None) -> str:
+        del brand_voice
+        return text
