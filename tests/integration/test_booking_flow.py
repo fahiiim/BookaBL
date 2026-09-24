@@ -9,7 +9,7 @@ from uuid import UUID
 import httpx
 import pytest
 from app.adapters.telegram import FakeTelegram
-from app.adapters.whatsapp import FakeWhatsApp, ReplyButton
+from app.adapters.whatsapp import FakeWhatsApp, ListRow, ReplyButton
 from app.bootstrap import Runtime, build_runtime
 from app.core.clock import FrozenClock
 from app.core.config import Settings
@@ -136,27 +136,32 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         await send_whatsapp(client, runtime, 1, "book appointment")
+        welcome_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
+        await send_whatsapp(client, runtime, 2, welcome_buttons[0].id, button=True)
         service_message = runtime.whatsapp.sent[-1]
         service_buttons = cast(list[ReplyButton], service_message["buttons"])
         await send_whatsapp(
-            client, runtime, 2, service_buttons[0].id, button=True
+            client, runtime, 3, service_buttons[0].id, button=True
         )
-        slot_message = runtime.whatsapp.sent[-1]
-        slot_buttons = cast(list[ReplyButton], slot_message["buttons"])
-        await send_whatsapp(client, runtime, 3, slot_buttons[0].id, button=True)
+        date_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+        await send_whatsapp(client, runtime, 4, date_rows[0].id, button=True)
+        time_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+        await send_whatsapp(client, runtime, 5, time_rows[0].id, button=True)
         payment_message = runtime.whatsapp.sent[-1]
         payment_buttons = cast(list[ReplyButton], payment_message["buttons"])
         medical_aid = next(
             button for button in payment_buttons if button.title == "Medical Aid"
         )
-        await send_whatsapp(client, runtime, 4, medical_aid.id, button=True)
-        await send_whatsapp(client, runtime, 5, "yEs")
-        await send_whatsapp(client, runtime, 6, "John Smith\n1234567\n01")
+        await send_whatsapp(client, runtime, 6, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 7, "yEs")
+        await send_whatsapp(
+            client, runtime, 8, "John Smith\nDiscovery Health\n1234567\n01"
+        )
 
         assert len(runtime.database.appointments) == 1
         appointment = next(iter(runtime.database.appointments.values()))
         assert appointment.price == Decimal("850")
-        assert appointment.medical_aid_name is None
+        assert appointment.medical_aid_name == "Discovery Health"
         assert appointment.medical_aid_number == "1234567"
         assert appointment.dependent_code == "01"
         assert appointment.google_event_id is not None
@@ -165,7 +170,7 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         consents = list(runtime.database.consents.values())
         assert len(consents) == 1
         assert consents[0].consent_type == "medical_aid"
-        assert consents[0].consent_version == "v1"
+        assert consents[0].consent_version == "v2"
         assert len(runtime.database.jobs) == 4
         assert len(runtime.database.outbox) == 2
 
@@ -211,7 +216,7 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         assert reminder_messages
         reminder_buttons = cast(list[ReplyButton], reminder_messages[-1]["buttons"])
         confirm = next(button for button in reminder_buttons if button.title == "Confirm")
-        await send_whatsapp(client, runtime, 7, confirm.id, button=True)
+        await send_whatsapp(client, runtime, 9, confirm.id, button=True)
 
     assert runtime.database.appointments[appointment.id].status is AppointmentStatus.CONFIRMED
 
@@ -224,10 +229,14 @@ async def begin_booking(
     assert isinstance(runtime.database, InMemoryDatabase)
     assert isinstance(runtime.whatsapp, FakeWhatsApp)
     await send_whatsapp(client, runtime, 1, "book appointment")
+    welcome_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
+    await send_whatsapp(client, runtime, 2, welcome_buttons[0].id, button=True)
     service_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
-    await send_whatsapp(client, runtime, 2, service_buttons[0].id, button=True)
-    slot_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
-    await send_whatsapp(client, runtime, 3, slot_buttons[0].id, button=True)
+    await send_whatsapp(client, runtime, 3, service_buttons[0].id, button=True)
+    date_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+    await send_whatsapp(client, runtime, 4, date_rows[0].id, button=True)
+    time_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+    await send_whatsapp(client, runtime, 5, time_rows[0].id, button=True)
     payment_buttons = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])
     patient_id = next(iter(runtime.database.patients))
     return payment_buttons[0], patient_id
@@ -245,8 +254,8 @@ async def test_medical_aid_no_aborts_booking_and_resets_state() -> None:
     ) as client:
         medical_aid, patient_id = await begin_booking(client, runtime)
         assert medical_aid.id == "payment:medical_aid"
-        await send_whatsapp(client, runtime, 4, medical_aid.id, button=True)
-        await send_whatsapp(client, runtime, 5, "NO")
+        await send_whatsapp(client, runtime, 6, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 7, "NO")
 
     state = runtime.database.states[(CLINIC_ID, patient_id)]
     assert state.state is ConversationStep.IDLE
@@ -270,8 +279,8 @@ async def test_cash_path_saves_consent_and_leaves_medical_aid_null() -> None:
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         _medical_aid, patient_id = await begin_booking(client, runtime)
-        await send_whatsapp(client, runtime, 4, "payment:cash", button=True)
-        await send_whatsapp(client, runtime, 5, "Thandi Nkosi")
+        await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 7, "Thandi Nkosi")
 
     appointment = next(iter(runtime.database.appointments.values()))
     assert appointment.medical_aid_name is None
@@ -280,7 +289,7 @@ async def test_cash_path_saves_consent_and_leaves_medical_aid_null() -> None:
     assert runtime.database.patients[patient_id].name == "Thandi Nkosi"
     consent = next(iter(runtime.database.consents.values()))
     assert consent.consent_type == "cash"
-    assert consent.consent_version == "v1"
+    assert consent.consent_version == "v2"
     assert runtime.database.states[(CLINIC_ID, patient_id)].state is ConversationStep.IDLE
 
 
@@ -295,9 +304,9 @@ async def test_malformed_medical_aid_details_are_retried_in_same_state() -> None
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         medical_aid, patient_id = await begin_booking(client, runtime)
-        await send_whatsapp(client, runtime, 4, medical_aid.id, button=True)
-        await send_whatsapp(client, runtime, 5, "YES")
-        await send_whatsapp(client, runtime, 6, "Thandi Nkosi\n1234567")
+        await send_whatsapp(client, runtime, 6, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 7, "YES")
+        await send_whatsapp(client, runtime, 8, "Thandi Nkosi\nDiscovery\n1234567")
 
     state = runtime.database.states[(CLINIC_ID, patient_id)]
     assert state.state is ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG
@@ -305,7 +314,8 @@ async def test_malformed_medical_aid_details_are_retried_in_same_state() -> None
     assert len(runtime.database.consents) == 1
     assert runtime.whatsapp.sent[-1]["text"] == (
         "I couldn't read those details clearly. Please send them exactly as: \n"
-        "1. Name \n2. MA Number \n3. Dependent Code"
+        "1. Name + Surname \n2. Medical Aid Scheme \n"
+        "3. MA Number \n4. Dependant Code"
     )
 
 
