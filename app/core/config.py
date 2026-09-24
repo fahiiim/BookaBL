@@ -37,6 +37,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: SecretStr | None = None
     telegram_bot_username: str | None = None
+    telegram_webhook_secret: SecretStr | None = None
 
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: SecretStr | None = None
