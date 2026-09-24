@@ -15,6 +15,7 @@ from app.domain.models import (
     BookingSummary,
     Clinic,
     ConversationState,
+    ConversationStep,
     FinalizeBookingCommand,
     JobStatus,
     MessageLogEntry,
@@ -163,6 +164,21 @@ class InMemoryDatabase:
         async with self._lock:
             self.states[(state.clinic_id, state.patient_id)] = state
 
+    async def get_handoff_state(
+        self, clinic_id: UUID, reference: str
+    ) -> ConversationState | None:
+        return next(
+            (
+                state
+                for state in self.states.values()
+                if state.clinic_id == clinic_id
+                and state.state is ConversationStep.HUMAN_HANDOFF
+                and str(state.slot.get("handoff_ref", "")).casefold()
+                == reference.casefold()
+            ),
+            None,
+        )
+
     async def log_message(
         self,
         clinic_id: UUID,
@@ -266,7 +282,7 @@ class InMemoryDatabase:
                 )
             return appointment
 
-    async def set_google_event_id(self, appointment_id: UUID, event_id: str) -> None:
+    async def set_google_event_id(self, appointment_id: UUID, event_id: str | None) -> None:
         async with self._lock:
             appointment = self.appointments[appointment_id]
             self.appointments[appointment_id] = appointment.model_copy(
@@ -362,10 +378,84 @@ class InMemoryDatabase:
             self.appointments[appointment_id] = updated
             return updated
 
+    async def reschedule_appointment(
+        self,
+        appointment_id: UUID,
+        patient_id: UUID,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> Appointment | None:
+        async with self._lock:
+            appointment = self.appointments.get(appointment_id)
+            if (
+                appointment is None
+                or appointment.patient_id != patient_id
+                or appointment.status
+                not in {AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED}
+            ):
+                return None
+            service = self.services[appointment.service_id]
+            clinic = self.clinics[appointment.clinic_id]
+            if ends_at != starts_at + timedelta(minutes=service.duration_min):
+                raise ValueError("Appointment duration does not match service")
+            if any(
+                item.id != appointment_id
+                and item.clinic_id == appointment.clinic_id
+                and item.status in {AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED}
+                and item.starts_at < ends_at
+                and item.ends_at > starts_at
+                for item in self.appointments.values()
+            ):
+                raise BookingConflictError("Booking slot is no longer available")
+            updated = appointment.model_copy(
+                update={
+                    "starts_at": starts_at,
+                    "ends_at": ends_at,
+                    "status": AppointmentStatus.BOOKED,
+                }
+            )
+            self.appointments[appointment_id] = updated
+            self.jobs = {
+                job_id: job
+                for job_id, job in self.jobs.items()
+                if job.appointment_id != appointment_id
+                or job.job_type not in {"reminder", "no_show_check", "review_request"}
+            }
+            suffix = starts_at.isoformat()
+            for offset in clinic.reminder_offsets_h:
+                self._insert_job(
+                    clinic_id=clinic.id,
+                    job_type="reminder",
+                    due_at=starts_at - timedelta(hours=offset),
+                    dedupe_key=f"reminder:{appointment_id}:{offset}:{suffix}",
+                    appointment_id=appointment_id,
+                    patient_id=patient_id,
+                )
+            self._insert_job(
+                clinic_id=clinic.id,
+                job_type="no_show_check",
+                due_at=starts_at + timedelta(minutes=15),
+                dedupe_key=f"attendance:{appointment_id}:{suffix}",
+                appointment_id=appointment_id,
+                patient_id=patient_id,
+            )
+            self._insert_job(
+                clinic_id=clinic.id,
+                job_type="review_request",
+                due_at=ends_at + timedelta(hours=2),
+                dedupe_key=f"review:{appointment_id}:{suffix}",
+                appointment_id=appointment_id,
+                patient_id=patient_id,
+            )
+            return updated
+
     async def mark_no_show(self, appointment_id: UUID) -> Appointment | None:
         async with self._lock:
             appointment = self.appointments.get(appointment_id)
-            if appointment is None or appointment.status is not AppointmentStatus.BOOKED:
+            if appointment is None or appointment.status not in {
+                AppointmentStatus.BOOKED,
+                AppointmentStatus.CONFIRMED,
+            }:
                 return None
             updated = appointment.model_copy(update={"status": AppointmentStatus.NO_SHOW})
             self.appointments[appointment_id] = updated
