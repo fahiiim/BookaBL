@@ -29,6 +29,46 @@ class SlotEngine:
         ]
         return self._candidates(clinic, service, now, busy, limit)
 
+    async def offer_dates(
+        self, clinic: Clinic, service: Service, limit: int = 3
+    ) -> list[date]:
+        """Return the next local dates containing at least one free slot."""
+
+        slots = await self.offer(clinic, service, limit=1000)
+        timezone = ZoneInfo(clinic.timezone)
+        dates: list[date] = []
+        for slot in slots:
+            local_date = slot.astimezone(timezone).date()
+            if local_date not in dates:
+                dates.append(local_date)
+            if len(dates) >= limit:
+                break
+        return dates
+
+    async def offer_on_date(
+        self, clinic: Clinic, service: Service, local_day: date, limit: int = 3
+    ) -> list[datetime]:
+        """Return free UTC starts on one clinic-local date."""
+
+        timezone = ZoneInfo(clinic.timezone)
+        starts_at = datetime.combine(local_day, datetime.min.time(), timezone).astimezone(UTC)
+        local_start = datetime.combine(local_day, datetime.min.time(), timezone)
+        ends_at = (local_start + timedelta(days=1)).astimezone(UTC)
+        calendar_busy = await self._calendar.free_busy(clinic, starts_at, ends_at)
+        appointments = await self._database.list_open_appointments(
+            clinic.id, ends_at, starts_at
+        )
+        busy = calendar_busy + [
+            BusyPeriod(starts_at=item.starts_at, ends_at=item.ends_at)
+            for item in appointments
+        ]
+        candidates = self._candidates(clinic, service, self._clock.now(), busy, 1000)
+        return [
+            slot
+            for slot in candidates
+            if slot.astimezone(timezone).date() == local_day
+        ][:limit]
+
     async def is_available(self, clinic: Clinic, service: Service, starts_at: datetime) -> bool:
         """Revalidate one UTC slot against hours, calendar, and persisted appointments."""
 
@@ -106,4 +146,3 @@ def local_date_bounds(local_day: date, timezone_name: str) -> tuple[datetime, da
     timezone = ZoneInfo(timezone_name)
     local_start = datetime.combine(local_day, datetime.min.time(), timezone)
     return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC)
-
