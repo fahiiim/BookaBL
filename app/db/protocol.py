@@ -74,6 +74,11 @@ class Database(Protocol):
     async def save_conversation_state(self, state: ConversationState) -> None:
         """Insert or replace a patient's durable conversation state."""
 
+    async def get_handoff_state(
+        self, clinic_id: UUID, reference: str
+    ) -> ConversationState | None:
+        """Resolve an active clinic-scoped human handoff by opaque reference."""
+
     async def log_message(
         self,
         clinic_id: UUID,
@@ -93,7 +98,7 @@ class Database(Protocol):
     async def finalize_booking(self, command: FinalizeBookingCommand) -> Appointment:
         """Atomically create a conflict-free appointment, jobs, and notifications."""
 
-    async def set_google_event_id(self, appointment_id: UUID, event_id: str) -> None:
+    async def set_google_event_id(self, appointment_id: UUID, event_id: str | None) -> None:
         """Attach a created Google Calendar event identifier."""
 
     async def get_oauth_token(
@@ -142,6 +147,15 @@ class Database(Protocol):
         to_status: AppointmentStatus,
     ) -> Appointment | None:
         """Conditionally transition an appointment owned by a patient."""
+
+    async def reschedule_appointment(
+        self,
+        appointment_id: UUID,
+        patient_id: UUID,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> Appointment | None:
+        """Atomically move an appointment and rebuild its automation jobs."""
 
     async def mark_no_show(self, appointment_id: UUID) -> Appointment | None:
         """Atomically mark a booked appointment no-show and increment the patient count."""
