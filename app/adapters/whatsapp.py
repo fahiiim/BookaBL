@@ -17,6 +17,15 @@ class ReplyButton:
     title: str
 
 
+@dataclass(frozen=True, slots=True)
+class ListRow:
+    """One row in a WhatsApp interactive list."""
+
+    id: str
+    title: str
+    description: str = ""
+
+
 class WhatsAppSender(Protocol):
     """Send and retrieve messages for a clinic's WhatsApp number."""
 
@@ -27,6 +36,11 @@ class WhatsAppSender(Protocol):
         self, clinic: Clinic, to: str, body: str, buttons: list[ReplyButton]
     ) -> None:
         """Send a session message containing up to three reply buttons."""
+
+    async def send_list(
+        self, clinic: Clinic, to: str, body: str, button_text: str, rows: list[ListRow]
+    ) -> None:
+        """Send a session message containing an interactive list."""
 
     async def send_template(
         self,
@@ -94,6 +108,45 @@ class MetaWhatsApp:
                             }
                             for button in buttons
                         ]
+                    },
+                },
+            },
+        )
+
+    async def send_list(
+        self, clinic: Clinic, to: str, body: str, button_text: str, rows: list[ListRow]
+    ) -> None:
+        if not 1 <= len(rows) <= 10:
+            raise ValueError("WhatsApp interactive lists require one to ten rows")
+        await self._send(
+            clinic,
+            {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "list",
+                    "body": {"text": body},
+                    "action": {
+                        "button": button_text[:20],
+                        "sections": [
+                            {
+                                "title": "Available options",
+                                "rows": [
+                                    {
+                                        "id": row.id,
+                                        "title": row.title[:24],
+                                        **(
+                                            {"description": row.description[:72]}
+                                            if row.description
+                                            else {}
+                                        ),
+                                    }
+                                    for row in rows
+                                ],
+                            }
+                        ],
                     },
                 },
             },
@@ -188,6 +241,20 @@ class FakeWhatsApp:
                 "to": to,
                 "body": body,
                 "buttons": buttons,
+            }
+        )
+
+    async def send_list(
+        self, clinic: Clinic, to: str, body: str, button_text: str, rows: list[ListRow]
+    ) -> None:
+        self.sent.append(
+            {
+                "kind": "list",
+                "clinic_id": clinic.id,
+                "to": to,
+                "body": body,
+                "button_text": button_text,
+                "rows": rows,
             }
         )
 
