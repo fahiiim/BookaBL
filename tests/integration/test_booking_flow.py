@@ -281,6 +281,9 @@ async def test_cash_path_saves_consent_and_leaves_medical_aid_null() -> None:
         _medical_aid, patient_id = await begin_booking(client, runtime)
         await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
         await send_whatsapp(client, runtime, 7, "Thandi Nkosi")
+        assert runtime.database.appointments == {}
+        assert runtime.database.consents == {}
+        await send_whatsapp(client, runtime, 8, "name:confirm", button=True)
 
     appointment = next(iter(runtime.database.appointments.values()))
     assert appointment.medical_aid_name is None
@@ -291,6 +294,55 @@ async def test_cash_path_saves_consent_and_leaves_medical_aid_null() -> None:
     assert consent.consent_type == "cash"
     assert consent.consent_version == "v2"
     assert runtime.database.states[(CLINIC_ID, patient_id)].state is ConversationStep.IDLE
+
+
+@pytest.mark.asyncio
+async def test_cash_name_can_be_edited_before_booking_is_finalized() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        _medical_aid, patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 7, "Barmuda Triangle")
+
+        state = runtime.database.states[(CLINIC_ID, patient_id)]
+        assert state.state is ConversationStep.AWAIT_CASH_NAME_CONFIRMATION
+        assert state.slot["patient_full_name"] == "Barmuda Triangle"
+        assert runtime.database.appointments == {}
+
+        await send_whatsapp(client, runtime, 8, "name:edit", button=True)
+        await send_whatsapp(client, runtime, 9, "Fahim Sarker")
+        await send_whatsapp(client, runtime, 10, "name:confirm", button=True)
+
+    appointment = next(iter(runtime.database.appointments.values()))
+    assert appointment.patient_id == patient_id
+    assert runtime.database.patients[patient_id].name == "Fahim Sarker"
+    assert len(runtime.database.consents) == 1
+
+
+@pytest.mark.asyncio
+async def test_cash_name_rejects_non_name_content() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        _medical_aid, patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 7, "call me on 0821234567")
+
+    state = runtime.database.states[(CLINIC_ID, patient_id)]
+    assert state.state is ConversationStep.AWAIT_CASH_NAME
+    assert runtime.database.appointments == {}
+    assert "name and surname" in str(runtime.whatsapp.sent[-1]["text"])
 
 
 @pytest.mark.asyncio
