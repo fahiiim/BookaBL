@@ -61,8 +61,14 @@ class NotificationFormatter:
     ) -> str:
         """Format patient confirmation text before the atomic appointment insert."""
 
-        when = self._friendly_datetime(clinic, starts_at)
-        return f"Your {service.name} appointment is booked for {when}. See you then!"
+        when = self.friendly_datetime(clinic, starts_at)
+        offsets = sorted(set(clinic.reminder_offsets_h), reverse=True)
+        reminder_text = self._reminder_offsets(offsets)
+        return (
+            f"Your {service.name} appointment is booked for {when}. "
+            f"We'll send you reminders {reminder_text} before your appointment. "
+            "See you then!"
+        )
 
     def owner_status_change(
         self,
@@ -81,11 +87,22 @@ class NotificationFormatter:
             f"{short_date(local)} {local:%H:%M}"
         )
 
-    def _friendly_datetime(self, clinic: Clinic, starts_at: datetime) -> str:
+    def friendly_datetime(self, clinic: Clinic, starts_at: datetime) -> str:
+        """Return a clinic-local date/time phrase for patient messages."""
+
         local = starts_at.astimezone(ZoneInfo(clinic.timezone))
         today = self._clock.now().astimezone(ZoneInfo(clinic.timezone)).date()
         label = self._date_label(local.date(), today)
         return f"{label} {local:%H:%M}"
+
+    @staticmethod
+    def _reminder_offsets(offsets: list[int]) -> str:
+        labels = [f"{value} hour{'s' if value != 1 else ''}" for value in offsets]
+        if not labels:
+            return "shortly"
+        if len(labels) == 1:
+            return labels[0]
+        return f"{', '.join(labels[:-1])} and {labels[-1]}"
 
     @staticmethod
     def _date_label(value: date, today: date) -> str:
