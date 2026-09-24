@@ -38,12 +38,18 @@ class ConversationStep(StrEnum):
     """Persisted booking conversation states."""
 
     IDLE = "idle"
+    AWAIT_ENTRY_CHOICE = "await_entry_choice"
     AWAIT_SERVICE = "await_service"
-    AWAIT_SLOT = "await_slot"
+    AWAIT_DATE = "await_date"
+    AWAIT_CUSTOM_DATE = "await_custom_date"
+    AWAIT_TIME = "await_time"
+    AWAIT_CUSTOM_TIME = "await_custom_time"
     AWAIT_PAYMENT_TYPE = "await_payment_type"
     AWAIT_POPIA_MA_CONSENT = "await_popia_ma_consent"
     AWAIT_MA_DETAILS_SINGLE_MSG = "await_ma_details_single_msg"
     AWAIT_CASH_NAME = "await_cash_name"
+    AWAIT_CANCEL_CONFIRMATION = "await_cancel_confirmation"
+    HUMAN_HANDOFF = "human_handoff"
 
 
 class OutboxStatus(StrEnum):
@@ -85,7 +91,7 @@ class Clinic(DomainModel):
     work_start: time = time(8)
     work_end: time = time(17)
     work_days: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])
-    reminder_offsets_h: list[int] = Field(default_factory=lambda: [24, 3])
+    reminder_offsets_h: list[int] = Field(default_factory=lambda: [24, 2])
     wa_templates: dict[str, Any] = Field(default_factory=dict)
     brand_voice: str | None = None
     created_at: datetime
