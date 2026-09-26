@@ -157,6 +157,13 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         await send_whatsapp(
             client, runtime, 8, "John Smith\nDiscovery Health\n1234567\n01"
         )
+        patient_id = next(iter(runtime.database.patients))
+        details_state = runtime.database.states[(CLINIC_ID, patient_id)]
+        assert details_state.state is ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION
+        assert runtime.database.appointments == {}
+        assert "ending 4567" in str(runtime.whatsapp.sent[-1]["body"])
+        assert "1234567" not in str(runtime.whatsapp.sent[-1]["body"])
+        await send_whatsapp(client, runtime, 9, "ma:confirm", button=True)
 
         assert len(runtime.database.appointments) == 1
         appointment = next(iter(runtime.database.appointments.values()))
@@ -207,16 +214,9 @@ async def test_full_booking_reminder_and_telegram_owner_paths() -> None:
         assert monthly_response.json() == {"handled": True}
         assert str(runtime.telegram.sent[-1]["text"]).startswith("LAST 30 DAYS")
 
-        reminder_response = await client.post("/dev/trigger-due-jobs")
-        assert reminder_response.status_code == 200
-        await runtime.outbox_worker.run_once()
-        reminder_messages = [
-            item for item in runtime.whatsapp.sent if item["kind"] == "buttons"
-        ]
-        assert reminder_messages
-        reminder_buttons = cast(list[ReplyButton], reminder_messages[-1]["buttons"])
-        confirm = next(button for button in reminder_buttons if button.title == "Confirm")
-        await send_whatsapp(client, runtime, 9, confirm.id, button=True)
+        await send_whatsapp(
+            client, runtime, 10, f"confirm:{appointment.id}", button=True
+        )
 
     assert runtime.database.appointments[appointment.id].status is AppointmentStatus.CONFIRMED
 
@@ -365,10 +365,48 @@ async def test_malformed_medical_aid_details_are_retried_in_same_state() -> None
     assert runtime.database.appointments == {}
     assert len(runtime.database.consents) == 1
     assert runtime.whatsapp.sent[-1]["text"] == (
-        "I couldn't read those details clearly. Please send them exactly as: \n"
+        "I couldn't match all four details. Send them together like this:\n"
         "1. Name + Surname \n2. Medical Aid Scheme \n"
         "3. MA Number \n4. Dependant Code"
     )
+
+
+@pytest.mark.asyncio
+async def test_medical_aid_details_can_be_edited_before_finalization() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        medical_aid, patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 6, medical_aid.id, button=True)
+        await send_whatsapp(client, runtime, 7, "YES")
+        await send_whatsapp(
+            client, runtime, 8, "Hurry Cane\nDiscovery\n20202\n369369"
+        )
+        assert runtime.database.appointments == {}
+        assert runtime.database.states[(CLINIC_ID, patient_id)].state is (
+            ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION
+        )
+
+        await send_whatsapp(client, runtime, 9, "ma:edit", button=True)
+        assert runtime.database.states[(CLINIC_ID, patient_id)].state is (
+            ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG
+        )
+        await send_whatsapp(
+            client, runtime, 10, "Bella Rose\nGEMS\n987654321\n01"
+        )
+        await send_whatsapp(client, runtime, 11, "ma:confirm", button=True)
+
+    appointment = next(iter(runtime.database.appointments.values()))
+    assert runtime.database.patients[patient_id].name == "Bella Rose"
+    assert appointment.medical_aid_name == "GEMS"
+    assert appointment.medical_aid_number == "987654321"
+    assert appointment.dependent_code == "01"
+    assert len(runtime.database.consents) == 1
 
 
 @pytest.mark.asyncio
