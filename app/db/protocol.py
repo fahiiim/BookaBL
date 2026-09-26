@@ -98,6 +98,14 @@ class Database(Protocol):
     async def finalize_booking(self, command: FinalizeBookingCommand) -> Appointment:
         """Atomically create a conflict-free appointment, jobs, and notifications."""
 
+    async def reschedule_automation_jobs_for_testing(
+        self,
+        appointment_id: UUID,
+        reminder_delays_seconds: tuple[int, int],
+        review_delay_seconds: int,
+    ) -> None:
+        """Move one booking's reminders and review job to short development delays."""
+
     async def set_google_event_id(self, appointment_id: UUID, event_id: str | None) -> None:
         """Attach a created Google Calendar event identifier."""
 
