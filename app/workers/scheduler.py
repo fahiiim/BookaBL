@@ -109,9 +109,16 @@ class Scheduler:
             local_time = appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
             if appointment.status is AppointmentStatus.CONFIRMED:
                 actions = actions[1:]
-            offset_hours = max(
-                1,
-                round((appointment.starts_at - job.due_at).total_seconds() / 3600),
+            configured_label = job.payload.get("reminder_label_hours")
+            offset_hours = (
+                int(configured_label)
+                if isinstance(configured_label, int)
+                else max(
+                    1,
+                    round(
+                        (appointment.starts_at - job.due_at).total_seconds() / 3600
+                    ),
+                )
             )
             payload = {
                 "kind": "buttons",
@@ -147,7 +154,7 @@ class Scheduler:
                     "text": (
                         "ATTENDANCE CHECK\n"
                         f"{short_date(local)} {local:%H:%M} - "
-                        f"{minimal_patient_name(summary.patient.name)}\n"
+                        f"{minimal_patient_name(summary.patient_name)}\n"
                         "If the patient did not arrive, reply:\n"
                         f"/noshow {summary.appointment.id}"
                     )
@@ -168,11 +175,11 @@ class Scheduler:
             return
         if summary.appointment.google_event_id or action == "update":
             event_id = await self._calendar.update_event(
-                clinic, summary.patient, summary.appointment
+                clinic, summary.appointment_patient, summary.appointment
             )
         else:
             event_id = await self._calendar.create_event(
-                clinic, summary.patient, summary.appointment
+                clinic, summary.appointment_patient, summary.appointment
             )
         if event_id is not None:
             await self._database.set_google_event_id(summary.appointment.id, event_id)
@@ -190,7 +197,7 @@ class Scheduler:
         if clinic is None or not (review_url := (clinic.google_review_url or "").strip()):
             return
         text = (
-            f"Thanks for visiting {clinic.name}, {summary.patient.name}! We'd love your feedback. "
+            f"Thanks for visiting {clinic.name}, {summary.patient_name}! We'd love your feedback. "
             f"Please leave us a Google review here: {review_url}"
         )
         await self._database.enqueue_outbox(
