@@ -97,6 +97,18 @@ async def test_calendar_outage_does_not_rollback_booking_and_attendance_is_manua
             raw={"id": "wamid.1"},
         ),
     )
+    await flow.handle(
+        clinic,
+        IncomingMessage(
+            message_id="wamid.2",
+            from_number=patient.wa_number,
+            profile_name=patient.name,
+            kind=MessageKind.BUTTON,
+            text="ma:confirm",
+            display_text="Confirm details",
+            raw={"id": "wamid.2"},
+        ),
+    )
 
     appointment = next(iter(database.appointments.values()))
     assert appointment.status is AppointmentStatus.BOOKED
