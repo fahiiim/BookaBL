@@ -89,6 +89,26 @@ def test_minimal_patient_name_handles_compound_surnames() -> None:
     assert minimal_patient_name("Cher") == "Cher"
 
 
+def test_confirmation_only_promises_reminders_that_are_still_upcoming() -> None:
+    clinic = _clinic()
+    service = _service()
+    formatter = NotificationFormatter(FrozenClock(NOW))
+
+    with_both = formatter.patient_confirmation_details(
+        clinic, service, NOW + timedelta(hours=30)
+    )
+    with_one = formatter.patient_confirmation_details(
+        clinic, service, NOW + timedelta(hours=20)
+    )
+    with_none = formatter.patient_confirmation_details(
+        clinic, service, NOW + timedelta(hours=1)
+    )
+
+    assert "reminders 24 hours and 2 hours beforehand" in with_both
+    assert "reminder 2 hours beforehand" in with_one
+    assert "reminder" not in with_none.casefold()
+
+
 @pytest.mark.asyncio
 async def test_telegram_daily_weekly_and_monthly_ranges_are_private() -> None:
     clock = FrozenClock(NOW)
@@ -128,6 +148,18 @@ async def test_telegram_daily_weekly_and_monthly_ranges_are_private() -> None:
     commands = TelegramCommandService(database, telegram, clock)
 
     assert await commands.handle(
+        {"message": {"chat": {"id": "owner-chat"}, "text": "/commands"}}
+    )
+    command_help = str(telegram.sent[-1]["text"])
+    assert command_help.startswith("BOOKABL TELEGRAM COMMANDS")
+    assert "/today or /bookings" in command_help
+    assert "/weekly" in command_help
+    assert "/monthly" in command_help
+    assert "/reply REFERENCE message" in command_help
+    assert "/resume REFERENCE" in command_help
+    assert "/noshow APPOINTMENT_ID" in command_help
+
+    assert await commands.handle(
         {"message": {"chat": {"id": "owner-chat"}, "text": "today's bookings"}}
     )
     today = str(telegram.sent[-1]["text"])
@@ -156,4 +188,7 @@ async def test_telegram_daily_weekly_and_monthly_ranges_are_private() -> None:
 
     assert not await commands.handle(
         {"message": {"chat": {"id": "another-clinic"}, "text": "monthly bookings"}}
+    )
+    assert not await commands.handle(
+        {"message": {"chat": {"id": "another-clinic"}, "text": "/commands"}}
     )
