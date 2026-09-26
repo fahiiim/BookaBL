@@ -43,6 +43,11 @@ class Scheduler:
 
         jobs = await self._database.pop_due_jobs(self._batch_size)
         for job in jobs:
+            if await self._appointment_is_being_rescheduled(job):
+                await self._database.defer_job(
+                    job.id, self._clock.now() + timedelta(seconds=30)
+                )
+                continue
             try:
                 await self._dispatch(job)
                 await self._database.complete_job(job.id)
@@ -61,6 +66,22 @@ class Scheduler:
                     failed=failed,
                 )
         return len(jobs)
+
+    async def _appointment_is_being_rescheduled(self, job: AutomationJob) -> bool:
+        if (
+            job.job_type not in {"reminder", "no_show_check", "review_request"}
+            or job.appointment_id is None
+            or job.patient_id is None
+        ):
+            return False
+        state = await self._database.get_conversation_state(
+            job.clinic_id, job.patient_id
+        )
+        return bool(
+            state
+            and str(state.slot.get("reschedule_from", ""))
+            == str(job.appointment_id)
+        )
 
     async def _dispatch(self, job: AutomationJob) -> None:
         if job.job_type == "reminder":
