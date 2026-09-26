@@ -77,6 +77,8 @@ class Scheduler:
     async def _send_reminder(self, job: AutomationJob) -> None:
         if job.appointment_id is None:
             raise ValueError("Reminder job has no appointment")
+        if job.due_at <= job.created_at:
+            return
         summary = await self._database.get_booking_summary(job.appointment_id)
         if summary is None:
             return
@@ -105,10 +107,16 @@ class Scheduler:
             }
         else:
             local_time = appointment.starts_at.astimezone(ZoneInfo(clinic.timezone))
+            if appointment.status is AppointmentStatus.CONFIRMED:
+                actions = actions[1:]
+            offset_hours = max(
+                1,
+                round((appointment.starts_at - job.due_at).total_seconds() / 3600),
+            )
             payload = {
                 "kind": "buttons",
                 "body": (
-                    f"Reminder: your {summary.service.name} appointment is "
+                    f"{offset_hours}-hour reminder: your {summary.service.name} appointment is "
                     f"{local_time:%a %d %b at %H:%M}."
                 ),
                 "buttons": actions,
