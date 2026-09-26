@@ -203,3 +203,54 @@ async def test_telegram_daily_weekly_and_monthly_ranges_are_private() -> None:
     assert not await commands.handle(
         {"message": {"chat": {"id": "another-clinic"}, "text": "/commands"}}
     )
+
+
+@pytest.mark.asyncio
+async def test_telegram_booking_list_keeps_name_captured_for_each_appointment() -> None:
+    """A later name from the same WhatsApp number must not rewrite booking history."""
+
+    clock = FrozenClock(NOW)
+    database = InMemoryDatabase(clock)
+    clinic = _clinic()
+    service = _service()
+    database.add_clinic(clinic)
+    database.add_service(service)
+    patient = await database.get_or_create_patient(
+        CLINIC_ID, "27820000000", "Fahim Sarker"
+    )
+
+    first_start = NOW + timedelta(days=1)
+    await database.finalize_booking(
+        FinalizeBookingCommand(
+            clinic_id=CLINIC_ID,
+            patient_id=patient.id,
+            service_id=SERVICE_ID,
+            starts_at=first_start,
+            ends_at=first_start + timedelta(minutes=30),
+            whatsapp_to=patient.wa_number,
+            whatsapp_payload={"kind": "text", "text": "Booked"},
+        )
+    )
+    patient = await database.update_patient_name(patient.id, "TungTung Sahur")
+    second_start = NOW + timedelta(days=2)
+    await database.finalize_booking(
+        FinalizeBookingCommand(
+            clinic_id=CLINIC_ID,
+            patient_id=patient.id,
+            service_id=SERVICE_ID,
+            starts_at=second_start,
+            ends_at=second_start + timedelta(minutes=30),
+            whatsapp_to=patient.wa_number,
+            whatsapp_payload={"kind": "text", "text": "Booked"},
+        )
+    )
+
+    telegram = FakeTelegram()
+    commands = TelegramCommandService(database, telegram, clock)
+    assert await commands.handle(
+        {"message": {"chat": {"id": "owner-chat"}, "text": "/upcoming"}}
+    )
+
+    upcoming = str(telegram.sent[-1]["text"])
+    assert "11 Sept. 12:00 - Fahim S" in upcoming
+    assert "12 Sept. 12:00 - TungTung S" in upcoming
