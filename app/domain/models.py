@@ -130,6 +130,7 @@ class Appointment(DomainModel):
     ends_at: datetime
     status: AppointmentStatus
     price: Decimal
+    patient_name: str | None = None
     medical_aid_name: str | None = None
     medical_aid_number: str | None = None
     dependent_code: str | None = None
@@ -237,6 +238,18 @@ class BookingSummary(DomainModel):
     appointment: Appointment
     patient: Patient
     service: Service
+
+    @property
+    def patient_name(self) -> str:
+        """Return the immutable name captured when this appointment was booked."""
+
+        return self.appointment.patient_name or self.patient.name
+
+    @property
+    def appointment_patient(self) -> Patient:
+        """Return patient contact data with this appointment's historical name."""
+
+        return self.patient.model_copy(update={"name": self.patient_name})
 
 
 class MessageLogEntry(DomainModel):
