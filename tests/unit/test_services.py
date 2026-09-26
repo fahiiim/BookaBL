@@ -73,6 +73,32 @@ async def test_slot_engine_skips_calendar_busy_periods() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_slot_engine_falls_back_to_database_when_calendar_is_unavailable() -> None:
+    clock = FrozenClock(MONDAY)
+    database = InMemoryDatabase(clock)
+    clinic = build_clinic()
+    service = Service(
+        id=SERVICE_ID,
+        clinic_id=CLINIC_ID,
+        name="Cleaning",
+        duration_min=30,
+        price=Decimal("850"),
+    )
+    database.add_clinic(clinic)
+    database.add_service(service)
+    calendar = FakeCalendar()
+    calendar.fail_free_busy = True
+
+    slots = await SlotEngine(database, calendar, clock).offer(clinic, service)
+
+    assert slots == [
+        MONDAY + timedelta(minutes=30),
+        MONDAY + timedelta(hours=1),
+        MONDAY + timedelta(hours=1, minutes=30),
+    ]
+
+
 def test_trial_gate_blocks_only_after_configured_duration() -> None:
     clinic = build_clinic()
     at_boundary = TrialGate(FrozenClock(MONDAY + timedelta(days=7)))
