@@ -1,7 +1,7 @@
 """Production database adapter backed by the asynchronous Supabase client."""
 
 from collections.abc import Sequence
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Any, cast
@@ -256,6 +256,57 @@ class SupabaseDatabase:
         await self._client.table("appointments").update({"google_event_id": event_id}).eq(
             "id", str(appointment_id)
         ).execute()
+
+    async def reschedule_automation_jobs_for_testing(
+        self,
+        appointment_id: UUID,
+        reminder_delays_seconds: tuple[int, int],
+        review_delay_seconds: int,
+    ) -> None:
+        appointment = await self.get_appointment(appointment_id)
+        if appointment is None:
+            raise ValueError("Cannot reschedule automation for an unknown appointment")
+        result = (
+            await self._client.table("automation_jobs")
+            .select("*")
+            .eq("appointment_id", str(appointment_id))
+            .in_("job_type", ["reminder", "review_request"])
+            .execute()
+        )
+        jobs = [AutomationJob.model_validate(row) for row in self._rows(result.data)]
+        reminders = sorted(
+            (job for job in jobs if job.job_type == "reminder"),
+            key=lambda job: job.due_at,
+        )
+        now = self._clock.now()
+        for job, delay in zip(reminders, reminder_delays_seconds, strict=False):
+            label_hours = round(
+                (appointment.starts_at - job.due_at).total_seconds() / 3600
+            )
+            await self._client.table("automation_jobs").update(
+                {
+                    "due_at": (now + timedelta(seconds=delay)).isoformat(),
+                    "status": "pending",
+                    "attempts": 0,
+                    "claimed_at": None,
+                    "last_error": None,
+                    "payload": {
+                        **job.payload,
+                        "reminder_label_hours": label_hours,
+                    },
+                }
+            ).eq("id", str(job.id)).execute()
+        review = next((job for job in jobs if job.job_type == "review_request"), None)
+        if review is not None:
+            await self._client.table("automation_jobs").update(
+                {
+                    "due_at": (now + timedelta(seconds=review_delay_seconds)).isoformat(),
+                    "status": "pending",
+                    "attempts": 0,
+                    "claimed_at": None,
+                    "last_error": None,
+                }
+            ).eq("id", str(review.id)).execute()
 
     async def get_oauth_token(
         self, clinic_id: UUID, provider: str = "google"
