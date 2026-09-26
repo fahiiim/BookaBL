@@ -10,6 +10,8 @@ from app.domain.models import (
     AppointmentStatus,
     AutomationJob,
     Clinic,
+    ConversationState,
+    ConversationStep,
     FinalizeBookingCommand,
     JobStatus,
     Service,
@@ -162,3 +164,45 @@ async def test_review_job_dedupe_key_is_idempotent() -> None:
     )
 
     assert sum(item.dedupe_key == job.dedupe_key for item in database.jobs.values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_review_job_waits_while_appointment_is_being_rescheduled() -> None:
+    database, clock, patient_id, appointment_id = await _book()
+    job = _review_job(database)
+    await database.save_conversation_state(
+        ConversationState(
+            clinic_id=CLINIC_ID,
+            patient_id=patient_id,
+            state=ConversationStep.AWAIT_DATE,
+            slot={"reschedule_from": str(appointment_id)},
+            updated_at=clock.now(),
+        )
+    )
+    database.outbox.clear()
+    clock.instant = job.due_at
+    scheduler = Scheduler(
+        database, FakeCalendar(), NotificationFormatter(clock), clock
+    )
+
+    await scheduler.run_once()
+
+    deferred = _review_job(database)
+    assert database.outbox == {}
+    assert deferred.status is JobStatus.PENDING
+    assert deferred.due_at == clock.now() + timedelta(seconds=30)
+    assert deferred.attempts == 0
+
+    await database.save_conversation_state(
+        ConversationState(
+            clinic_id=CLINIC_ID,
+            patient_id=patient_id,
+            state=ConversationStep.IDLE,
+            updated_at=clock.now(),
+        )
+    )
+    clock.instant = deferred.due_at
+    await scheduler.run_once()
+
+    assert len(database.outbox) == 1
+    assert _review_job(database).status is JobStatus.COMPLETED
