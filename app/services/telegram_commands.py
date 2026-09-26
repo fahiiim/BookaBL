@@ -16,6 +16,18 @@ TODAY_COMMANDS = {"today's bookings", "todays bookings", "today bookings", "/boo
 WEEKLY_COMMANDS = {"weekly bookings", "/weekly", "/weekly_bookings"}
 MONTHLY_COMMANDS = {"monthly bookings", "/monthly", "/monthly_bookings"}
 TELEGRAM_MESSAGE_LIMIT = 4000
+COMMANDS_HELP = """BOOKABL TELEGRAM COMMANDS
+
+/commands - Show this command guide.
+/today or /bookings - Show today's appointments.
+/weekly - Show appointments from the last 7 days.
+/monthly - Show appointments from the last 30 days.
+/reply REFERENCE message - Reply to a patient during an active receptionist handoff.
+/resume REFERENCE - Return an active handoff to the automated booking assistant.
+/noshow APPOINTMENT_ID - Mark a booked or confirmed appointment as a no-show.
+
+The REFERENCE is shown in PATIENT HANDOFF alerts.
+The APPOINTMENT_ID is shown in ATTENDANCE CHECK alerts."""
 
 
 class TelegramCommandService:
@@ -44,6 +56,9 @@ class TelegramCommandService:
         await self._database.log_message(
             clinic.id, None, "telegram", "inbound", str(message.get("text", "")), payload
         )
+        if command == "/commands":
+            await self._send(chat_id, clinic.id, COMMANDS_HELP)
+            return True
         if command.startswith("/reply "):
             return await self._reply_to_patient(clinic.id, chat_id, raw_text)
         if command.startswith("/resume "):
@@ -134,7 +149,7 @@ class TelegramCommandService:
         await self._database.save_conversation_state(
             state.model_copy(
                 update={
-                    "state": ConversationStep.IDLE,
+                    "state": ConversationStep.AWAIT_ENTRY_CHOICE,
                     "slot": {},
                     "updated_at": self._clock.now(),
                 }
@@ -153,7 +168,12 @@ class TelegramCommandService:
                 ],
             },
         )
-        await self._send(chat_id, clinic_id, f"Automation resumed for {parts[1].upper()}.")
+        await self._send(
+            chat_id,
+            clinic_id,
+            f"Automation resumed for {parts[1].upper()}. "
+            "The booking menu is being sent to the patient.",
+        )
         return True
 
     async def _mark_no_show(self, clinic_id: UUID, chat_id: str, command: str) -> bool:
