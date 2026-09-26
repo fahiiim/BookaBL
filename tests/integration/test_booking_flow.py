@@ -534,6 +534,67 @@ async def test_test_automation_delays_restart_after_reschedule() -> None:
 
 
 @pytest.mark.asyncio
+async def test_visible_reschedule_button_starts_new_date_and_time_flow() -> None:
+    runtime, clinic = await build_test_runtime(automation_test_mode=True)
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    assert isinstance(runtime.clock, FrozenClock)
+    runtime.database.add_clinic(
+        clinic.model_copy(update={"google_review_url": "https://example.com/review"})
+    )
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        _medical_aid, patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 7, "Test Patient")
+        await send_whatsapp(client, runtime, 8, "name:confirm", button=True)
+        appointment = next(iter(runtime.database.appointments.values()))
+        await runtime.outbox_worker.run_once()
+
+        runtime.clock.instant = NOW + timedelta(seconds=60)
+        await runtime.scheduler.run_once()
+        await runtime.outbox_worker.run_once()
+        await send_whatsapp(client, runtime, 9, "Confirm", button=True)
+        assert runtime.database.appointments[appointment.id].status is (
+            AppointmentStatus.CONFIRMED
+        )
+
+        runtime.clock.instant = NOW + timedelta(seconds=90)
+        await runtime.scheduler.run_once()
+        await runtime.outbox_worker.run_once()
+        await send_whatsapp(client, runtime, 10, "Reschedule", button=True)
+
+        state = runtime.database.states[(CLINIC_ID, patient_id)]
+        assert state.state is ConversationStep.AWAIT_DATE
+        assert state.slot["reschedule_from"] == str(appointment.id)
+        assert runtime.whatsapp.sent[-1]["kind"] == "list"
+
+        sent_before_review = len(runtime.whatsapp.sent)
+        runtime.clock.instant = NOW + timedelta(seconds=120)
+        await runtime.scheduler.run_once()
+        await runtime.outbox_worker.run_once()
+        assert len(runtime.whatsapp.sent) == sent_before_review
+
+        date_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+        await send_whatsapp(client, runtime, 11, date_rows[0].id, button=True)
+        time_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+        await send_whatsapp(client, runtime, 12, time_rows[0].id, button=True)
+
+    updated = runtime.database.appointments[appointment.id]
+    assert updated.starts_at != appointment.starts_at
+    assert runtime.database.states[(CLINIC_ID, patient_id)].state is ConversationStep.IDLE
+    review = next(
+        job
+        for job in runtime.database.jobs.values()
+        if job.appointment_id == appointment.id and job.job_type == "review_request"
+    )
+    assert review.due_at == NOW + timedelta(seconds=240)
+
+
+@pytest.mark.asyncio
 async def test_automation_test_mode_is_rejected_in_production() -> None:
     settings = Settings(
         _env_file=None,
