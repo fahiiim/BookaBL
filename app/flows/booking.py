@@ -54,6 +54,9 @@ class BookingFlow:
         trial_gate: TrialGate,
         notifications: NotificationFormatter,
         clock: Clock,
+        *,
+        test_reminder_delays_seconds: tuple[int, int] | None = None,
+        test_review_delay_seconds: int | None = None,
     ) -> None:
         self._database = database
         self._whatsapp = whatsapp
@@ -63,6 +66,8 @@ class BookingFlow:
         self._trial_gate = trial_gate
         self._notifications = notifications
         self._clock = clock
+        self._test_reminder_delays_seconds = test_reminder_delays_seconds
+        self._test_review_delay_seconds = test_review_delay_seconds
 
     async def handle(self, clinic: Clinic, message: IncomingMessage) -> None:
         """Handle one normalized inbound patient message."""
@@ -632,6 +637,19 @@ class BookingFlow:
             )
             await self._offer_dates(clinic, patient, state, service, dict(state.slot))
             return
+
+        if (
+            self._test_reminder_delays_seconds is not None
+            and self._test_review_delay_seconds is not None
+        ):
+            try:
+                await self._database.reschedule_automation_jobs_for_testing(
+                    appointment.id,
+                    self._test_reminder_delays_seconds,
+                    self._test_review_delay_seconds,
+                )
+            except Exception as exc:
+                logger.warning("automation_test_schedule_failed", exc_info=exc)
 
         try:
             event_id = await self._calendar.create_event(
