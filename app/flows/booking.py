@@ -676,13 +676,16 @@ class BookingFlow:
         state: ConversationState,
         text: str,
     ) -> bool:
-        action, separator, raw_id = text.partition(":")
-        if not separator or action not in {"confirm", "reschedule", "cancel"}:
+        resolved = await self._resolve_appointment_action(
+            clinic, patient, state, text
+        )
+        if resolved is None:
             return False
-        try:
-            appointment_id = UUID(raw_id)
-        except ValueError:
-            await self._reply_text(clinic, patient, "That appointment action is invalid.")
+        action, appointment_id = resolved
+        if appointment_id is None:
+            await self._reply_text(
+                clinic, patient, "I couldn't find an upcoming appointment to update."
+            )
             return True
         if action == "confirm":
             updated = await self._database.transition_appointment_status(
@@ -745,6 +748,44 @@ class BookingFlow:
             {"service_id": str(summary.service.id), "reschedule_from": str(appointment_id)},
         )
         return True
+
+    async def _resolve_appointment_action(
+        self,
+        clinic: Clinic,
+        patient: Patient,
+        state: ConversationState,
+        text: str,
+    ) -> tuple[str, UUID | None] | None:
+        normalized = text.casefold().strip()
+        action, separator, raw_id = normalized.partition(":")
+        if action not in {"confirm", "reschedule", "cancel"}:
+            return None
+        if separator:
+            try:
+                return action, UUID(raw_id)
+            except ValueError:
+                return action, None
+        if state.state not in {
+            ConversationStep.IDLE,
+            ConversationStep.AWAIT_ENTRY_CHOICE,
+        }:
+            return None
+        bookings = await self._database.admin_list_appointments(
+            clinic.id,
+            starts_at=self._clock.now(),
+            patient_id=patient.id,
+            limit=50,
+        )
+        upcoming = [
+            item
+            for item in bookings
+            if item.appointment.status
+            in {AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED}
+        ]
+        if not upcoming:
+            return action, None
+        appointment = min(upcoming, key=lambda item: item.appointment.starts_at)
+        return action, appointment.appointment.id
 
     async def _handle_cancel_confirmation(
         self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
