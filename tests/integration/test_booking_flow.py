@@ -488,6 +488,52 @@ async def test_automation_test_mode_uses_short_post_booking_delays() -> None:
 
 
 @pytest.mark.asyncio
+async def test_test_automation_delays_restart_after_reschedule() -> None:
+    runtime, _clinic = await build_test_runtime(automation_test_mode=True)
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    assert isinstance(runtime.clock, FrozenClock)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        _medical_aid, _patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 7, "Test Patient")
+        await send_whatsapp(client, runtime, 8, "name:confirm", button=True)
+        appointment = next(iter(runtime.database.appointments.values()))
+
+        await send_whatsapp(
+            client,
+            runtime,
+            9,
+            f"reschedule:{appointment.id}",
+            button=True,
+        )
+        date_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+        await send_whatsapp(client, runtime, 10, date_rows[0].id, button=True)
+        time_rows = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])
+        await send_whatsapp(client, runtime, 11, time_rows[0].id, button=True)
+
+    jobs = [
+        job
+        for job in runtime.database.jobs.values()
+        if job.appointment_id == appointment.id
+    ]
+    reminders = sorted(
+        (job for job in jobs if job.job_type == "reminder"),
+        key=lambda job: job.due_at,
+    )
+    review = next(job for job in jobs if job.job_type == "review_request")
+    assert [job.due_at for job in reminders] == [
+        NOW + timedelta(seconds=60),
+        NOW + timedelta(seconds=90),
+    ]
+    assert review.due_at == NOW + timedelta(seconds=120)
+
+
+@pytest.mark.asyncio
 async def test_automation_test_mode_is_rejected_in_production() -> None:
     settings = Settings(
         _env_file=None,
