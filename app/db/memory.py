@@ -632,6 +632,19 @@ class InMemoryDatabase:
                 }
             )
 
+    async def defer_job(self, job_id: UUID, due_at: datetime) -> None:
+        async with self._lock:
+            job = self.jobs[job_id]
+            self.jobs[job_id] = job.model_copy(
+                update={
+                    "status": JobStatus.PENDING,
+                    "due_at": due_at,
+                    "attempts": max(0, job.attempts - 1),
+                    "claimed_at": None,
+                    "last_error": None,
+                }
+            )
+
     async def retry_job(
         self, job_id: UUID, due_at: datetime, error: str, *, failed: bool = False
     ) -> None:
