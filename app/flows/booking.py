@@ -779,7 +779,11 @@ class BookingFlow:
                     clinic.telegram_chat_id,
                     {
                         "text": self._notifications.owner_status_change(
-                            "Cancelled", clinic, patient, summary.service, updated
+                            "Cancelled",
+                            clinic,
+                            summary.appointment_patient,
+                            summary.service,
+                            updated,
                         )
                     },
                 )
@@ -811,7 +815,19 @@ class BookingFlow:
             await self._save_state(state, ConversationStep.IDLE, {})
             await self._reply_text(clinic, patient, "That appointment can no longer be changed.")
             return
-        await self._sync_rescheduled_calendar(clinic, patient, appointment)
+        if (
+            self._test_reminder_delays_seconds is not None
+            and self._test_review_delay_seconds is not None
+        ):
+            await self._database.reschedule_automation_jobs_for_testing(
+                appointment.id,
+                self._test_reminder_delays_seconds,
+                self._test_review_delay_seconds,
+            )
+        appointment_patient = patient.model_copy(
+            update={"name": appointment.patient_name or patient.name}
+        )
+        await self._sync_rescheduled_calendar(clinic, appointment_patient, appointment)
         await self._save_state(state, ConversationStep.IDLE, {})
         when = self._notifications.friendly_datetime(clinic, appointment.starts_at)
         await self._reply_text(
@@ -826,7 +842,7 @@ class BookingFlow:
                 clinic.telegram_chat_id,
                 {
                     "text": self._notifications.owner_status_change(
-                        "Rescheduled", clinic, patient, service, appointment
+                        "Rescheduled", clinic, appointment_patient, service, appointment
                     )
                 },
             )
