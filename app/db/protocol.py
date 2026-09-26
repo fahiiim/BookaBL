@@ -208,6 +208,9 @@ class Database(Protocol):
     async def complete_job(self, job_id: UUID) -> None:
         """Mark an automation job complete."""
 
+    async def defer_job(self, job_id: UUID, due_at: datetime) -> None:
+        """Return a claimed job to pending without counting a failed attempt."""
+
     async def retry_job(
         self, job_id: UUID, due_at: datetime, error: str, *, failed: bool = False
     ) -> None:
