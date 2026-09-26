@@ -534,6 +534,25 @@ class SupabaseDatabase:
             {"status": "completed", "claimed_at": None, "last_error": None}
         ).eq("id", str(job_id)).execute()
 
+    async def defer_job(self, job_id: UUID, due_at: datetime) -> None:
+        result = (
+            await self._client.table("automation_jobs")
+            .select("attempts")
+            .eq("id", str(job_id))
+            .execute()
+        )
+        rows = self._rows(result.data)
+        attempts = max(0, int(rows[0].get("attempts", 0)) - 1) if rows else 0
+        await self._client.table("automation_jobs").update(
+            {
+                "status": "pending",
+                "due_at": due_at.isoformat(),
+                "attempts": attempts,
+                "claimed_at": None,
+                "last_error": None,
+            }
+        ).eq("id", str(job_id)).execute()
+
     async def retry_job(
         self, job_id: UUID, due_at: datetime, error: str, *, failed: bool = False
     ) -> None:
