@@ -123,6 +123,7 @@ async def test_telegram_daily_weekly_and_monthly_ranges_are_private() -> None:
         7: "Seven Days",
         29: "TwentyNine Days",
         30: "Thirty Days",
+        -1: "Tomorrow Patient",
     }
     for index, (days_ago, name) in enumerate(names_by_age.items(), start=1):
         patient = await database.get_or_create_patient(
@@ -182,9 +183,19 @@ async def test_telegram_daily_weekly_and_monthly_ranges_are_private() -> None:
     assert "Seven D" in monthly
     assert "TwentyNine D" in monthly
     assert "Thirty D" not in monthly
+    assert "Tomorrow P" not in monthly
     assert "Root Canal" not in monthly
     assert "Private Health" not in monthly
     assert "MA-" not in monthly
+
+    assert await commands.handle(
+        {"message": {"chat": {"id": "owner-chat"}, "text": "/upcoming"}}
+    )
+    upcoming = str(telegram.sent[-1]["text"])
+    assert upcoming.startswith("UPCOMING 30 DAYS")
+    assert "Current P" in upcoming
+    assert "Tomorrow P" in upcoming
+    assert "Six D" not in upcoming
 
     assert not await commands.handle(
         {"message": {"chat": {"id": "another-clinic"}, "text": "monthly bookings"}}
