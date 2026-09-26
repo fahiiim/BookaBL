@@ -62,12 +62,18 @@ class NotificationFormatter:
         """Format patient confirmation text before the atomic appointment insert."""
 
         when = self.friendly_datetime(clinic, starts_at)
-        offsets = sorted(set(clinic.reminder_offsets_h), reverse=True)
-        reminder_text = self._reminder_offsets(offsets)
+        offsets = sorted(
+            {
+                offset
+                for offset in clinic.reminder_offsets_h
+                if starts_at - timedelta(hours=offset) > self._clock.now()
+            },
+            reverse=True,
+        )
+        reminder_sentence = self._reminder_sentence(offsets)
         return (
-            f"Your {service.name} appointment is booked for {when}. "
-            f"We'll send you reminders {reminder_text} before your appointment. "
-            "See you then!"
+            f"Your {service.name} appointment is all set for {when}. "
+            f"{reminder_sentence}See you then!"
         )
 
     def owner_status_change(
@@ -103,6 +109,13 @@ class NotificationFormatter:
         if len(labels) == 1:
             return labels[0]
         return f"{', '.join(labels[:-1])} and {labels[-1]}"
+
+    @classmethod
+    def _reminder_sentence(cls, offsets: list[int]) -> str:
+        if not offsets:
+            return ""
+        noun = "reminder" if len(offsets) == 1 else "reminders"
+        return f"We'll send you {noun} {cls._reminder_offsets(offsets)} beforehand. "
 
     @staticmethod
     def _date_label(value: date, today: date) -> str:
