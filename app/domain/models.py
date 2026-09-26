@@ -47,6 +47,7 @@ class ConversationStep(StrEnum):
     AWAIT_PAYMENT_TYPE = "await_payment_type"
     AWAIT_POPIA_MA_CONSENT = "await_popia_ma_consent"
     AWAIT_MA_DETAILS_SINGLE_MSG = "await_ma_details_single_msg"
+    AWAIT_MA_DETAILS_CONFIRMATION = "await_ma_details_confirmation"
     AWAIT_CASH_NAME = "await_cash_name"
     AWAIT_CASH_NAME_CONFIRMATION = "await_cash_name_confirmation"
     AWAIT_CANCEL_CONFIRMATION = "await_cancel_confirmation"
