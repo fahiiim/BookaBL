@@ -219,6 +219,16 @@ class GoogleCalendar:
                     "grant_type": "refresh_token",
                 },
             )
+            if response.status_code == 400:
+                try:
+                    oauth_error = str(response.json().get("error", ""))
+                except (TypeError, ValueError):
+                    oauth_error = ""
+                if oauth_error == "invalid_grant":
+                    await self._database.delete_oauth_token(clinic.id, "google")
+                    await self._database.set_google_oauth_connected(clinic.id, False)
+                    self._token_cache.pop(clinic.id, None)
+                    return None
             response.raise_for_status()
             token = str(response.json()["access_token"])
             expires_in = max(int(response.json().get("expires_in", 3600)), 60)
@@ -285,7 +295,7 @@ class FakeCalendar(StubCalendar):
     ) -> list[BusyPeriod]:
         del clinic
         if self.fail_free_busy:
-            raise ExternalServiceError("fake_calendar", "free/busy unavailable")
+            raise CalendarProviderError("fake_calendar", "free/busy unavailable")
         return [
             period
             for period in self.busy
