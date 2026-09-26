@@ -150,7 +150,8 @@ registering the Telegram webhook. BookaBL validates Telegram's
 The dashboard is for the BookaBL administrator only. Clinic staff operate through their bound
 Telegram chat. Handoffs use `/reply REFERENCE message` and `/resume REFERENCE`; attendance checks
 use `/noshow APPOINTMENT_ID`. Clinic staff can send `/commands` at any time to see the complete
-command guide and usage syntax. Every command is resolved through the clinic's
+command guide and usage syntax. `/today`, `/weekly`, and `/monthly` use scheduled appointment
+dates; `/upcoming` shows the next 30 days. Every command is resolved through the clinic's
 `telegram_chat_id`.
 
 `work_days` use ISO weekday numbers. Reminder template configuration is optional; without it,
@@ -166,6 +167,11 @@ the Google OAuth application values are absent, a deterministic calendar stub is
 - `POST /dev/trigger-due-jobs` exists only when `APP_ENV=dev` and runs one scheduler batch.
 - `TIME_OFFSET_SECONDS` shifts the injected system clock for demos. Restart API and worker after
   changing it so both processes use the same effective time.
+- For development-only end-to-end automation testing, set `AUTOMATION_TEST_MODE=true`. The
+  default test schedule sends the nominal 24-hour reminder after 60 seconds, the nominal 2-hour
+  reminder after 90 seconds, and the review request after 120 seconds. The three delays can be
+  changed with `TEST_REMINDER_24H_DELAY_SECONDS`, `TEST_REMINDER_2H_DELAY_SECONDS`, and
+  `TEST_REVIEW_DELAY_SECONDS`. The application refuses to start with this mode in production.
 - `RUN_WORKERS_IN_API=true` supervises all three worker loops inside the API process. Do not also
   start `app.workers.runner` unless you intentionally want another queue consumer.
 - Failed outbox sends retry after 30 seconds, 2 minutes, 10 minutes, and 1 hour. A fifth failed
