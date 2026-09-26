@@ -91,6 +91,17 @@ class ConversationTransitions:
         ),
         ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG: frozenset(
             {
+                ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
+                ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION,
+                ConversationStep.AWAIT_DATE,
+                ConversationStep.IDLE,
+                ConversationStep.HUMAN_HANDOFF,
+            }
+        ),
+        ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION: frozenset(
+            {
+                ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
+                ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION,
                 ConversationStep.AWAIT_DATE,
                 ConversationStep.IDLE,
                 ConversationStep.HUMAN_HANDOFF,
@@ -122,7 +133,11 @@ class ConversationTransitions:
             }
         ),
         ConversationStep.HUMAN_HANDOFF: frozenset(
-            {ConversationStep.HUMAN_HANDOFF, ConversationStep.IDLE}
+            {
+                ConversationStep.HUMAN_HANDOFF,
+                ConversationStep.AWAIT_ENTRY_CHOICE,
+                ConversationStep.IDLE,
+            }
         ),
     }
 
