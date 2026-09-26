@@ -15,13 +15,15 @@ from app.services.slot_engine import local_date_bounds
 TODAY_COMMANDS = {"today's bookings", "todays bookings", "today bookings", "/bookings", "/today"}
 WEEKLY_COMMANDS = {"weekly bookings", "/weekly", "/weekly_bookings"}
 MONTHLY_COMMANDS = {"monthly bookings", "/monthly", "/monthly_bookings"}
+UPCOMING_COMMANDS = {"upcoming bookings", "/upcoming"}
 TELEGRAM_MESSAGE_LIMIT = 4000
 COMMANDS_HELP = """BOOKABL TELEGRAM COMMANDS
 
 /commands - Show this command guide.
-/today or /bookings - Show today's appointments.
-/weekly - Show appointments from the last 7 days.
-/monthly - Show appointments from the last 30 days.
+/today or /bookings - Show appointments scheduled for today.
+/weekly - Show appointments scheduled in the previous 7 days.
+/monthly - Show appointments scheduled in the previous 30 days.
+/upcoming - Show appointments scheduled in the next 30 days.
 /reply REFERENCE message - Reply to a patient during an active receptionist handoff.
 /resume REFERENCE - Return an active handoff to the automated booking assistant.
 /noshow APPOINTMENT_ID - Mark a booked or confirmed appointment as a no-show.
@@ -66,13 +68,23 @@ class TelegramCommandService:
         if command.startswith("/noshow "):
             return await self._mark_no_show(clinic.id, chat_id, command)
         period = self._command_period(command)
-        if period is None:
+        is_upcoming = command in UPCOMING_COMMANDS
+        if period is None and not is_upcoming:
             return False
 
         local_day = self._clock.now().astimezone(ZoneInfo(clinic.timezone)).date()
-        start_day = local_day - timedelta(days=period - 1)
-        starts_at = local_date_bounds(start_day, clinic.timezone)[0]
-        ends_at = local_date_bounds(local_day, clinic.timezone)[1]
+        if is_upcoming:
+            starts_at = local_date_bounds(local_day, clinic.timezone)[0]
+            ends_at = local_date_bounds(local_day + timedelta(days=29), clinic.timezone)[1]
+            header = f"UPCOMING 30 DAYS - {clinic.name} bookings"
+            empty_label = "in the next 30 days"
+        else:
+            assert period is not None
+            start_day = local_day - timedelta(days=period - 1)
+            starts_at = local_date_bounds(start_day, clinic.timezone)[0]
+            ends_at = local_date_bounds(local_day, clinic.timezone)[1]
+            header = self._header(period, local_day, clinic.name)
+            empty_label = "today" if period == 1 else f"in the previous {period} days"
         bookings = await self._database.list_booking_summaries(
             clinic.id, starts_at, ends_at
         )
@@ -84,19 +96,18 @@ class TelegramCommandService:
         ]
         if bookings:
             timezone = ZoneInfo(clinic.timezone)
-            lines = [self._header(period, local_day, clinic.name)]
+            lines = [header]
             lines.extend(
                 self._booking_line(
                     item.appointment.starts_at.astimezone(timezone),
-                    item.patient.name,
-                    include_date=period > 1,
+                    item.patient_name,
+                    include_date=is_upcoming or period != 1,
                 )
                 for item in bookings
             )
             replies = self._chunks(lines)
         else:
-            label = "today" if period == 1 else f"in the last {period} days"
-            replies = [f"No bookings {label}."]
+            replies = [f"No bookings {empty_label}."]
 
         for reply in replies:
             await self._telegram.send_message(chat_id, reply)
@@ -198,7 +209,7 @@ class TelegramCommandService:
         await self._send(
             chat_id,
             clinic_id,
-            f"No-show recorded for {minimal_patient_name(summary.patient.name)}.",
+            f"No-show recorded for {minimal_patient_name(summary.patient_name)}.",
         )
         return True
 
