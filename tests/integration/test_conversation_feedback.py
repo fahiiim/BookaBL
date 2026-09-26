@@ -38,7 +38,10 @@ async def test_reception_handoff_relays_telegram_replies_and_can_resume() -> Non
     ) as client:
         await send_whatsapp(client, runtime, 1, "Hello")
         welcome = runtime.whatsapp.sent[-1]
-        assert welcome["body"] == "Hi! Welcome to Test Dental. How can I help you today?"
+        assert welcome["body"] == (
+            "Good morning! Welcome to Test Dental. I can help you book a visit or "
+            "connect you with reception. What would you like to do?"
+        )
         buttons = cast(list[ReplyButton], welcome["buttons"])
         reception = next(button for button in buttons if button.id == "start:human")
         await send_whatsapp(client, runtime, 2, reception.id, button=True)
@@ -81,7 +84,22 @@ async def test_reception_handoff_relays_telegram_replies_and_can_resume() -> Non
                 }
             },
         )
-        assert runtime.database.states[(CLINIC_ID, patient_id)].state is ConversationStep.IDLE
+        resumed = runtime.database.states[(CLINIC_ID, patient_id)]
+        assert resumed.state is ConversationStep.AWAIT_ENTRY_CHOICE
+
+        await runtime.outbox_worker.run_once()
+        resume_message = runtime.whatsapp.sent[-1]
+        assert resume_message["body"] == (
+            "The automated booking assistant is available again. How can I help?"
+        )
+        resume_buttons = cast(list[ReplyButton], resume_message["buttons"])
+        assert [button.id for button in resume_buttons] == ["start:book", "start:human"]
+
+        await send_whatsapp(client, runtime, 4, "I wanna book appointment")
+        assert runtime.database.states[(CLINIC_ID, patient_id)].state is (
+            ConversationStep.AWAIT_SERVICE
+        )
+        assert runtime.whatsapp.sent[-1]["body"] == "What would you like to book?"
 
 
 @pytest.mark.asyncio
@@ -102,12 +120,12 @@ async def test_brand_voice_only_styles_the_safe_welcome_message() -> None:
         assert str(runtime.whatsapp.sent[-1]["body"]).startswith("DISTORTED:")
 
         await send_whatsapp(client, runtime, 2, "start:book", button=True)
-        assert runtime.whatsapp.sent[-1]["body"] == "Which service would you like?"
+        assert runtime.whatsapp.sent[-1]["body"] == "What would you like to book?"
 
         service = cast(list[ReplyButton], runtime.whatsapp.sent[-1]["buttons"])[0]
         await send_whatsapp(client, runtime, 3, service.id, button=True)
         assert runtime.whatsapp.sent[-1]["body"] == (
-            "Which date would suit you? Here are the nearest available dates."
+            "Let's find a day that suits you. Here are the nearest available dates."
         )
 
         selected_date = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])[0]
@@ -115,7 +133,7 @@ async def test_brand_voice_only_styles_the_safe_welcome_message() -> None:
         selected_time = cast(list[ListRow], runtime.whatsapp.sent[-1]["rows"])[0]
         await send_whatsapp(client, runtime, 5, selected_time.id, button=True)
         assert runtime.whatsapp.sent[-1]["body"] == (
-            "How will you pay for your appointment?"
+            "Will you be paying by medical aid or cash?"
         )
 
 
@@ -152,6 +170,35 @@ async def test_custom_date_is_extracted_from_a_natural_sentence() -> None:
     assert state.slot["selected_date"] == "2026-08-25"
     assert runtime.whatsapp.sent[-1]["kind"] == "list"
     assert "Tue 25 Aug" in str(runtime.whatsapp.sent[-1]["body"])
+
+
+@pytest.mark.asyncio
+async def test_returning_idle_patient_receives_the_welcome_menu_first() -> None:
+    runtime, _clinic = await build_test_runtime()
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await send_whatsapp(client, runtime, 1, "Hello")
+        await send_whatsapp(client, runtime, 2, "start:book", button=True)
+        patient_id = next(iter(runtime.database.patients))
+        current = runtime.database.states[(CLINIC_ID, patient_id)]
+        await runtime.database.save_conversation_state(
+            current.model_copy(update={"state": ConversationStep.IDLE, "slot": {}})
+        )
+
+        await send_whatsapp(client, runtime, 3, "I want to book an appointment")
+
+    welcome = runtime.whatsapp.sent[-1]
+    assert "Welcome to Test Dental" in str(welcome["body"])
+    buttons = cast(list[ReplyButton], welcome["buttons"])
+    assert [button.id for button in buttons] == ["start:book", "start:human"]
+    assert runtime.database.states[(CLINIC_ID, patient_id)].state is (
+        ConversationStep.AWAIT_ENTRY_CHOICE
+    )
 
 
 async def _book_cash(
