@@ -1,12 +1,16 @@
 """Configuration-driven appointment candidate computation and validation."""
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.adapters.calendar import CalendarProvider
 from app.core.clock import Clock
+from app.core.exceptions import CalendarProviderError
 from app.db.protocol import Database
 from app.domain.models import BusyPeriod, Clinic, Service
+
+logger = logging.getLogger(__name__)
 
 
 class SlotEngine:
@@ -22,7 +26,7 @@ class SlotEngine:
 
         now = self._clock.now()
         horizon = now + timedelta(days=31)
-        calendar_busy = await self._calendar.free_busy(clinic, now, horizon)
+        calendar_busy = await self._calendar_busy(clinic, now, horizon)
         appointments = await self._database.list_open_appointments(clinic.id, horizon, now)
         busy = calendar_busy + [
             BusyPeriod(starts_at=item.starts_at, ends_at=item.ends_at) for item in appointments
@@ -54,7 +58,7 @@ class SlotEngine:
         starts_at = datetime.combine(local_day, datetime.min.time(), timezone).astimezone(UTC)
         local_start = datetime.combine(local_day, datetime.min.time(), timezone)
         ends_at = (local_start + timedelta(days=1)).astimezone(UTC)
-        calendar_busy = await self._calendar.free_busy(clinic, starts_at, ends_at)
+        calendar_busy = await self._calendar_busy(clinic, starts_at, ends_at)
         appointments = await self._database.list_open_appointments(
             clinic.id, ends_at, starts_at
         )
@@ -78,7 +82,7 @@ class SlotEngine:
         ends_at = starts_at + timedelta(minutes=service.duration_min)
         if not self._within_work_hours(clinic, starts_at, ends_at):
             return False
-        calendar_busy = await self._calendar.free_busy(clinic, starts_at, ends_at)
+        calendar_busy = await self._calendar_busy(clinic, starts_at, ends_at)
         appointments = await self._database.list_open_appointments(
             clinic.id, ends_at, starts_at
         )
@@ -86,6 +90,18 @@ class SlotEngine:
             BusyPeriod(starts_at=item.starts_at, ends_at=item.ends_at) for item in appointments
         ]
         return not any(self._overlaps(starts_at, ends_at, period) for period in busy)
+
+    async def _calendar_busy(
+        self, clinic: Clinic, starts_at: datetime, ends_at: datetime
+    ) -> list[BusyPeriod]:
+        try:
+            return await self._calendar.free_busy(clinic, starts_at, ends_at)
+        except CalendarProviderError as exc:
+            logger.warning(
+                "calendar_availability_fallback",
+                extra={"clinic_id": str(clinic.id), "calendar_error": str(exc)},
+            )
+            return []
 
     def _candidates(
         self,
