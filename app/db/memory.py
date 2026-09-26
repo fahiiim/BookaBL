@@ -242,6 +242,7 @@ class InMemoryDatabase:
                 ends_at=command.ends_at,
                 status=AppointmentStatus.BOOKED,
                 price=service.price,
+                patient_name=self.patients[command.patient_id].name,
                 medical_aid_name=command.medical_aid_name,
                 medical_aid_number=command.medical_aid_number,
                 dependent_code=command.dependent_code,
@@ -288,6 +289,53 @@ class InMemoryDatabase:
             self.appointments[appointment_id] = appointment.model_copy(
                 update={"google_event_id": event_id}
             )
+
+    async def reschedule_automation_jobs_for_testing(
+        self,
+        appointment_id: UUID,
+        reminder_delays_seconds: tuple[int, int],
+        review_delay_seconds: int,
+    ) -> None:
+        async with self._lock:
+            appointment = self.appointments[appointment_id]
+            reminders = sorted(
+                (
+                    job
+                    for job in self.jobs.values()
+                    if job.appointment_id == appointment_id and job.job_type == "reminder"
+                ),
+                key=lambda job: job.due_at,
+            )
+            for job, delay in zip(reminders, reminder_delays_seconds, strict=False):
+                label_hours = round(
+                    (appointment.starts_at - job.due_at).total_seconds() / 3600
+                )
+                self.jobs[job.id] = job.model_copy(
+                    update={
+                        "due_at": self._clock.now() + timedelta(seconds=delay),
+                        "status": JobStatus.PENDING,
+                        "attempts": 0,
+                        "claimed_at": None,
+                        "last_error": None,
+                        "payload": {
+                            **job.payload,
+                            "reminder_label_hours": label_hours,
+                        },
+                    }
+                )
+            for job in self.jobs.values():
+                if job.appointment_id == appointment_id and job.job_type == "review_request":
+                    self.jobs[job.id] = job.model_copy(
+                        update={
+                            "due_at": self._clock.now()
+                            + timedelta(seconds=review_delay_seconds),
+                            "status": JobStatus.PENDING,
+                            "attempts": 0,
+                            "claimed_at": None,
+                            "last_error": None,
+                        }
+                    )
+                    break
 
     async def get_oauth_token(
         self, clinic_id: UUID, provider: str = "google"
