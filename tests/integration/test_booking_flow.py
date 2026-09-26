@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import json
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -13,6 +13,7 @@ from app.adapters.whatsapp import FakeWhatsApp, ListRow, ReplyButton
 from app.bootstrap import Runtime, build_runtime
 from app.core.clock import FrozenClock
 from app.core.config import Settings
+from app.core.exceptions import ConfigurationError
 from app.db.memory import InMemoryDatabase
 from app.domain.models import (
     AppointmentStatus,
@@ -31,11 +32,14 @@ WA_NUMBER = "27820000000"
 APP_SECRET = "integration-secret"
 
 
-async def build_test_runtime(*, expired: bool = False) -> tuple[Runtime, Clinic]:
+async def build_test_runtime(
+    *, expired: bool = False, automation_test_mode: bool = False
+) -> tuple[Runtime, Clinic]:
     settings = Settings(
         _env_file=None,
         app_env="dev",
         time_offset_seconds=0,
+        automation_test_mode=automation_test_mode,
         wa_app_secret=SecretStr(APP_SECRET),
         wa_verify_token=SecretStr("verify"),
     )
@@ -428,3 +432,68 @@ async def test_expired_trial_is_blocked_and_throttled_once_per_day() -> None:
     assert len(runtime.whatsapp.sent) == 1
     assert "temporarily unavailable" in runtime.whatsapp.sent[0]["text"]
     assert len(runtime.telegram.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_automation_test_mode_uses_short_post_booking_delays() -> None:
+    runtime, clinic = await build_test_runtime(automation_test_mode=True)
+    assert isinstance(runtime.database, InMemoryDatabase)
+    assert isinstance(runtime.whatsapp, FakeWhatsApp)
+    assert isinstance(runtime.clock, FrozenClock)
+    runtime.database.add_clinic(
+        clinic.model_copy(update={"google_review_url": "https://example.com/review"})
+    )
+    app = create_app(runtime.api_context)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        _medical_aid, _patient_id = await begin_booking(client, runtime)
+        await send_whatsapp(client, runtime, 6, "payment:cash", button=True)
+        await send_whatsapp(client, runtime, 7, "Test Patient")
+        await send_whatsapp(client, runtime, 8, "name:confirm", button=True)
+
+    reminders = sorted(
+        (job for job in runtime.database.jobs.values() if job.job_type == "reminder"),
+        key=lambda job: job.due_at,
+    )
+    review = next(
+        job for job in runtime.database.jobs.values() if job.job_type == "review_request"
+    )
+    assert [job.due_at for job in reminders] == [
+        NOW + timedelta(seconds=60),
+        NOW + timedelta(seconds=90),
+    ]
+    assert [job.payload["reminder_label_hours"] for job in reminders] == [24, 2]
+    assert review.due_at == NOW + timedelta(seconds=120)
+
+    await runtime.outbox_worker.run_once()
+    runtime.clock.instant = NOW + timedelta(seconds=60)
+    await runtime.scheduler.run_once()
+    await runtime.outbox_worker.run_once()
+    assert str(runtime.whatsapp.sent[-1]["body"]).startswith("24-hour reminder:")
+
+    runtime.clock.instant = NOW + timedelta(seconds=90)
+    await runtime.scheduler.run_once()
+    await runtime.outbox_worker.run_once()
+    assert str(runtime.whatsapp.sent[-1]["body"]).startswith("2-hour reminder:")
+
+    runtime.clock.instant = NOW + timedelta(seconds=120)
+    await runtime.scheduler.run_once()
+    await runtime.outbox_worker.run_once()
+    assert runtime.whatsapp.sent[-1]["text"] == (
+        "Thanks for visiting Test Dental, Test Patient! We'd love your feedback. "
+        "Please leave us a Google review here: https://example.com/review"
+    )
+
+
+@pytest.mark.asyncio
+async def test_automation_test_mode_is_rejected_in_production() -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env="prod",
+        automation_test_mode=True,
+    )
+
+    with pytest.raises(ConfigurationError, match="only allowed"):
+        await build_runtime(settings, injected_clock=FrozenClock(NOW))
