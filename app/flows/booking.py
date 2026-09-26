@@ -8,7 +8,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.adapters.calendar import CalendarProvider
-from app.adapters.intent import IntentKind, IntentModel
+from app.adapters.intent import IntentModel
 from app.adapters.whatsapp import ListRow, ReplyButton, WhatsAppSender
 from app.core.clock import Clock
 from app.core.exceptions import BookingConflictError
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 _PATIENT_PLACEHOLDER = "WhatsApp patient"
 _CONSENT_VERSION = "v2"
 _MA_DETAILS_RETRY = (
-    "I couldn't read those details clearly. Please send them exactly as: \n"
+    "I couldn't match all four details. Send them together like this:\n"
     "1. Name + Surname \n2. Medical Aid Scheme \n"
     "3. MA Number \n4. Dependant Code"
 )
@@ -123,6 +123,10 @@ class BookingFlow:
                 await self._handle_medical_aid_consent(clinic, patient, state, message.text)
             case ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG:
                 await self._handle_medical_aid_details(clinic, patient, state, message.text)
+            case ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION:
+                await self._handle_medical_aid_details_confirmation(
+                    clinic, patient, state, message.text
+                )
             case ConversationStep.AWAIT_CASH_NAME:
                 await self._handle_cash_name(clinic, patient, state, message.text)
             case ConversationStep.AWAIT_CASH_NAME_CONFIRMATION:
@@ -137,10 +141,7 @@ class BookingFlow:
     async def _handle_idle(
         self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
     ) -> None:
-        intent = await self._intent.classify(text)
-        if intent.intent is IntentKind.BOOK:
-            await self._offer_services(clinic, patient, state)
-            return
+        del text
         await self._show_entry_menu(clinic, patient, state)
 
     async def _show_entry_menu(
@@ -150,7 +151,7 @@ class BookingFlow:
         await self._reply_buttons(
             clinic,
             patient,
-            f"Hi! Welcome to {clinic.name}. How can I help you today?",
+            self._welcome_message(clinic),
             [
                 ReplyButton("start:book", "Book appointment"),
                 ReplyButton("start:human", "Chat to receptionist"),
@@ -162,7 +163,7 @@ class BookingFlow:
         self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
     ) -> None:
         choice = text.casefold().strip()
-        if choice in {"start:book", "book", "book appointment"}:
+        if choice == "start:book" or self._is_booking_request(choice):
             await self._offer_services(clinic, patient, state)
             return
         if choice in {
@@ -199,7 +200,7 @@ class BookingFlow:
         await self._reply_buttons(
             clinic,
             patient,
-            "Which service would you like?",
+            "What would you like to book?",
             [ReplyButton(f"service:{service.id}", service.name) for service in offered],
         )
 
@@ -237,7 +238,7 @@ class BookingFlow:
         await self._reply_list(
             clinic,
             patient,
-            "Which date would suit you? Here are the nearest available dates.",
+            "Let's find a day that suits you. Here are the nearest available dates.",
             "Choose a date",
             [
                 ListRow(f"date:{value.isoformat()}", value.strftime("%a %d %b"))
@@ -254,7 +255,7 @@ class BookingFlow:
                 state, ConversationStep.AWAIT_CUSTOM_DATE, dict(state.slot)
             )
             await self._reply_text(
-                clinic, patient, "Please type your preferred date, for example 25/09/2026."
+                clinic, patient, "What date works best? You can type it as 25/09/2026."
             )
             return
         raw_date = text.removeprefix("date:") if text.startswith("date:") else ""
@@ -272,7 +273,7 @@ class BookingFlow:
             await self._reply_text(
                 clinic,
                 patient,
-                "I couldn't read that date. Please use DD/MM/YYYY, for example 25/09/2026.",
+                "I couldn't make out that date. Try DD/MM/YYYY, for example 25/09/2026.",
             )
             return
         await self._offer_times(clinic, patient, state, selected_date)
@@ -302,7 +303,7 @@ class BookingFlow:
         await self._reply_list(
             clinic,
             patient,
-            f"Available times for {selected_date:%a %d %b}:",
+            f"Here are the available times for {selected_date:%a %d %b}:",
             "Choose a time",
             [
                 ListRow(f"time:{self._iso_utc(slot)}", slot.astimezone(timezone).strftime("%H:%M"))
@@ -319,7 +320,7 @@ class BookingFlow:
                 state, ConversationStep.AWAIT_CUSTOM_TIME, dict(state.slot)
             )
             await self._reply_text(
-                clinic, patient, "Please type your preferred time, for example 14:30."
+                clinic, patient, "What time works best? You can type it as 14:30."
             )
             return
         selected = text.removeprefix("time:") if text.startswith("time:") else ""
@@ -336,7 +337,7 @@ class BookingFlow:
         raw_date = state.slot.get("selected_date")
         if selected_time is None or not isinstance(raw_date, str):
             await self._reply_text(
-                clinic, patient, "I couldn't read that time. Please use HH:MM, for example 14:30."
+                clinic, patient, "I couldn't make out that time. Try HH:MM, for example 14:30."
             )
             return
         timezone = ZoneInfo(clinic.timezone)
@@ -371,7 +372,7 @@ class BookingFlow:
         await self._reply_buttons(
             clinic,
             patient,
-            "How will you pay for your appointment?",
+            "Will you be paying by medical aid or cash?",
             [
                 ReplyButton("payment:medical_aid", "Medical Aid"),
                 ReplyButton("payment:cash", "Cash"),
@@ -425,7 +426,7 @@ class BookingFlow:
         await self._reply_text(
             clinic,
             patient,
-            "Thanks. Please send in 1 message:\n"
+            "Great, send these details together in one message:\n"
             "1. Name + Surname\n"
             "2. Medical aid scheme/name (e.g. Discovery, GEMS or Bonitas)\n"
             "3. Medical aid no\n"
@@ -439,6 +440,64 @@ class BookingFlow:
         details = self._parse_medical_aid_details(text)
         if details is None:
             await self._reply_text(clinic, patient, _MA_DETAILS_RETRY, style=False)
+            return
+        patient_full_name, medical_aid_name, medical_aid_number, dependent_code = details
+        context = dict(state.slot)
+        context.update(
+            {
+                "patient_full_name": patient_full_name,
+                "medical_aid_name": medical_aid_name,
+                "medical_aid_number": medical_aid_number,
+                "dependent_code": dependent_code,
+            }
+        )
+        await self._save_state(
+            state, ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION, context
+        )
+        await self._reply_buttons(
+            clinic,
+            patient,
+            self._medical_aid_confirmation(context),
+            [
+                ReplyButton("ma:confirm", "Confirm details"),
+                ReplyButton("ma:edit", "Edit details"),
+            ],
+        )
+
+    async def _handle_medical_aid_details_confirmation(
+        self, clinic: Clinic, patient: Patient, state: ConversationState, text: str
+    ) -> None:
+        choice = text.casefold().strip()
+        if choice in {"ma:edit", "edit", "edit details", "no"}:
+            context = self._without_medical_aid_details(state.slot)
+            await self._save_state(
+                state, ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG, context
+            )
+            await self._reply_text(
+                clinic,
+                patient,
+                "No problem—send the four corrected details together in one message.",
+            )
+            return
+        if choice not in {"ma:confirm", "confirm", "confirm details", "yes"}:
+            await self._reply_buttons(
+                clinic,
+                patient,
+                self._medical_aid_confirmation(state.slot),
+                [
+                    ReplyButton("ma:confirm", "Confirm details"),
+                    ReplyButton("ma:edit", "Edit details"),
+                ],
+            )
+            return
+        details = self._medical_aid_details_from_context(state.slot)
+        if details is None:
+            await self._save_state(
+                state,
+                ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
+                self._without_medical_aid_details(state.slot),
+            )
+            await self._reply_text(clinic, patient, _MA_DETAILS_RETRY)
             return
         patient_full_name, medical_aid_name, medical_aid_number, dependent_code = details
         patient = await self._database.update_patient_name(patient.id, patient_full_name)
@@ -471,7 +530,7 @@ class BookingFlow:
         await self._reply_buttons(
             clinic,
             patient,
-            f"Please confirm the booking name: {patient_full_name}",
+            f"I have the booking name as {patient_full_name}. Is that correct?",
             [
                 ReplyButton("name:confirm", "Confirm name"),
                 ReplyButton("name:edit", "Edit name"),
@@ -497,7 +556,7 @@ class BookingFlow:
             await self._reply_buttons(
                 clinic,
                 patient,
-                f"Please confirm the booking name: {pending_name}",
+                f"I have the booking name as {pending_name}. Is that correct?",
                 [
                     ReplyButton("name:confirm", "Confirm name"),
                     ReplyButton("name:edit", "Edit name"),
@@ -961,7 +1020,9 @@ class BookingFlow:
         style: bool = False,
     ) -> None:
         if style:
-            body = await self._intent.style(body, clinic.brand_voice)
+            styled = await self._intent.style(body, clinic.brand_voice)
+            if clinic.name.casefold() in styled.casefold():
+                body = styled
         await self._whatsapp.send_buttons(clinic, patient.wa_number, body, buttons)
         await self._database.log_message(
             clinic.id,
@@ -1012,6 +1073,19 @@ class BookingFlow:
             raise ValueError("Slot timestamp must include a timezone")
         return parsed.astimezone(UTC)
 
+    def _welcome_message(self, clinic: Clinic) -> str:
+        local_hour = self._clock.now().astimezone(ZoneInfo(clinic.timezone)).hour
+        if local_hour < 12:
+            greeting = "Good morning"
+        elif local_hour < 18:
+            greeting = "Good afternoon"
+        else:
+            greeting = "Good evening"
+        return (
+            f"{greeting}! Welcome to {clinic.name}. I can help you book a visit or "
+            "connect you with reception. What would you like to do?"
+        )
+
     @staticmethod
     def _medical_aid_consent(clinic: Clinic) -> str:
         return (
@@ -1057,7 +1131,75 @@ class BookingFlow:
             if not value:
                 return None
             values.append(value)
-        return values[0], values[1], values[2], values[3]
+        patient_name = BookingFlow._parse_patient_name(values[0])
+        if patient_name is None:
+            return None
+        scheme, member_number, dependent_code = values[1:]
+        if not BookingFlow._valid_medical_aid_scheme(scheme):
+            return None
+        if not BookingFlow._valid_medical_identifier(member_number, min_length=4):
+            return None
+        if not BookingFlow._valid_medical_identifier(dependent_code, min_length=1):
+            return None
+        return patient_name, scheme, member_number, dependent_code
+
+    @staticmethod
+    def _valid_medical_aid_scheme(value: str) -> bool:
+        lowered = value.casefold()
+        return (
+            2 <= len(value) <= 80
+            and any(character.isalpha() for character in value)
+            and "@" not in value
+            and "http://" not in lowered
+            and "https://" not in lowered
+        )
+
+    @staticmethod
+    def _valid_medical_identifier(value: str, *, min_length: int) -> bool:
+        return (
+            min_length <= len(value) <= 40
+            and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._/-]*", value))
+            and any(character.isdigit() for character in value)
+        )
+
+    @classmethod
+    def _medical_aid_details_from_context(
+        cls, context: dict[str, Any]
+    ) -> tuple[str, str, str, str] | None:
+        values = [
+            str(context.get("patient_full_name", "")),
+            str(context.get("medical_aid_name", "")),
+            str(context.get("medical_aid_number", "")),
+            str(context.get("dependent_code", "")),
+        ]
+        return cls._parse_medical_aid_details("\n".join(values))
+
+    @staticmethod
+    def _without_medical_aid_details(context: dict[str, Any]) -> dict[str, Any]:
+        cleaned = dict(context)
+        for key in (
+            "patient_full_name",
+            "medical_aid_name",
+            "medical_aid_number",
+            "dependent_code",
+        ):
+            cleaned.pop(key, None)
+        return cleaned
+
+    @staticmethod
+    def _medical_aid_confirmation(context: dict[str, Any]) -> str:
+        member_number = str(context.get("medical_aid_number", ""))
+        masked_number = (
+            f"ending {member_number[-4:]}" if len(member_number) > 4 else "provided"
+        )
+        return (
+            "Let's check those details before I book:\n\n"
+            f"Name: {context.get('patient_full_name', '')}\n"
+            f"Medical aid: {context.get('medical_aid_name', '')}\n"
+            f"Medical aid number: {masked_number}\n"
+            f"Dependant code: {context.get('dependent_code', '')}\n\n"
+            "Is everything correct?"
+        )
 
     def _parse_local_date(self, value: str, clinic: Clinic) -> date | None:
         normalized = value.casefold().strip()
@@ -1152,6 +1294,14 @@ class BookingFlow:
         ):
             return None
         return normalized
+
+    @staticmethod
+    def _is_booking_request(value: str) -> bool:
+        normalized = value.casefold().strip()
+        return bool(
+            re.search(r"\b(?:book|booking)\b", normalized)
+            and re.search(r"\b(?:appointment|visit|slot)\b", normalized)
+        ) or normalized in {"book", "appointment"}
 
     @staticmethod
     def _parse_local_time(value: str) -> time | None:
