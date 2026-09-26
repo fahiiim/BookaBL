@@ -46,6 +46,8 @@ class Runtime:
 async def build_runtime(settings: Settings, *, injected_clock: Clock | None = None) -> Runtime:
     """Build a production-backed runtime or an empty in-memory development runtime."""
 
+    if settings.automation_test_mode and settings.app_env != "dev":
+        raise ConfigurationError("AUTOMATION_TEST_MODE is only allowed when APP_ENV=dev")
     clock = injected_clock or SystemClock(settings.time_offset_seconds)
     if settings.supabase_url and settings.supabase_service_role_key:
         database: Database = await SupabaseDatabase.create(
@@ -128,6 +130,17 @@ async def build_runtime(settings: Settings, *, injected_clock: Clock | None = No
         TrialGate(clock),
         notifications,
         clock,
+        test_reminder_delays_seconds=(
+            (
+                settings.test_reminder_24h_delay_seconds,
+                settings.test_reminder_2h_delay_seconds,
+            )
+            if settings.automation_test_mode
+            else None
+        ),
+        test_review_delay_seconds=(
+            settings.test_review_delay_seconds if settings.automation_test_mode else None
+        ),
     )
     event_processor = EventProcessor(
         database,
