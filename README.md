@@ -149,7 +149,9 @@ registering the Telegram webhook. BookaBL validates Telegram's
 
 The dashboard is for the BookaBL administrator only. Clinic staff operate through their bound
 Telegram chat. Handoffs use `/reply REFERENCE message` and `/resume REFERENCE`; attendance checks
-use `/noshow APPOINTMENT_ID`. Every command is resolved through the clinic's `telegram_chat_id`.
+use `/noshow APPOINTMENT_ID`. Clinic staff can send `/commands` at any time to see the complete
+command guide and usage syntax. Every command is resolved through the clinic's
+`telegram_chat_id`.
 
 `work_days` use ISO weekday numbers. Reminder template configuration is optional; without it,
 the scheduler sends an interactive session message. Google Calendar is optional; when the three
