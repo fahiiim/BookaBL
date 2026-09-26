@@ -105,6 +105,13 @@ def test_state_machine_enforces_popia_consent_gate() -> None:
     )
     assert (
         ConversationTransitions.validate(
+            ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
+            ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION,
+        )
+        is ConversationStep.AWAIT_MA_DETAILS_CONFIRMATION
+    )
+    assert (
+        ConversationTransitions.validate(
             ConversationStep.AWAIT_CASH_NAME,
             ConversationStep.AWAIT_CASH_NAME_CONFIRMATION,
         )
@@ -115,3 +122,13 @@ def test_state_machine_enforces_popia_consent_gate() -> None:
             ConversationStep.AWAIT_PAYMENT_TYPE,
             ConversationStep.AWAIT_MA_DETAILS_SINGLE_MSG,
         )
+
+
+def test_state_machine_can_resume_handoff_at_entry_menu() -> None:
+    assert (
+        ConversationTransitions.validate(
+            ConversationStep.HUMAN_HANDOFF,
+            ConversationStep.AWAIT_ENTRY_CHOICE,
+        )
+        is ConversationStep.AWAIT_ENTRY_CHOICE
+    )
