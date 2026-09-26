@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
 
     worker_poll_seconds: float = 1.0
     worker_batch_size: int = 20
+
+    automation_test_mode: bool = False
+    test_reminder_24h_delay_seconds: int = Field(default=60, ge=1)
+    test_reminder_2h_delay_seconds: int = Field(default=90, ge=1)
+    test_review_delay_seconds: int = Field(default=120, ge=1)
 
 
 @lru_cache(maxsize=1)
