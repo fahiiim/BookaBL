@@ -286,6 +286,54 @@ async def test_calendar_refreshes_per_clinic_token_and_isolates_tenants() -> Non
 
 
 @pytest.mark.asyncio
+async def test_calendar_disconnects_revoked_refresh_token_without_blocking_booking() -> None:
+    key = Fernet.generate_key().decode()
+    clock = FrozenClock(NOW)
+    database = InMemoryDatabase(clock)
+    clinic = _clinic(CLINIC_A, connected=True)
+    database.add_clinic(clinic)
+    await database.upsert_oauth_token(
+        CLINIC_A,
+        "google",
+        encrypt_token("revoked-refresh", key),
+        access_token="expired-access",
+        token_expires_at=NOW - timedelta(seconds=1),
+    )
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                400,
+                json={
+                    "error": "invalid_grant",
+                    "error_description": "Token has been expired or revoked.",
+                },
+            )
+        )
+    )
+    calendar = GoogleCalendar(
+        database,
+        "google-client-id",
+        "google-client-secret",
+        SecretStr(key),
+        clock,
+        client,
+    )
+    try:
+        busy = await calendar.free_busy(
+            clinic, NOW, NOW + timedelta(days=1)
+        )
+
+        assert busy == []
+        assert await database.get_oauth_token(CLINIC_A) is None
+        disconnected = await database.get_clinic(CLINIC_A)
+        assert disconnected is not None
+        assert not disconnected.google_oauth_connected
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_removes_only_clinic_token_and_clears_flag() -> None:
     key = Fernet.generate_key().decode()
     app, database, _clock, oauth_client, _settings_value = _oauth_app(
